@@ -88,9 +88,7 @@
     const welcome = $('#welcome'), view = $('#view');
     if (!S.loaded) {
       welcome.hidden = false; view.hidden = true;
-      $('#fsSupport').textContent = NS.fs.supported()
-        ? 'متصفحك يدعم القراءة والكتابة المباشرة على القرص. كل شيء يبقى محلياً.'
-        : '⚠ متصفحك لا يدعم File System Access API. استخدم Chrome أو Edge للكتابة المباشرة، أو استعمل الاستيراد/التصدير.';
+      updateFsSupportNote();
       return;
     }
     welcome.hidden = true; view.hidden = false;
@@ -117,6 +115,14 @@
     $('#btnExport').disabled = !S.loaded;
     ST.updateScopeChip();
     renderFsStatus();
+  }
+
+  function updateFsSupportNote() {
+    const note = $('#fsSupport');
+    if (!note) return;
+    note.textContent = NS.fs.supported()
+      ? 'متصفحك يدعم القراءة والكتابة المباشرة على القرص. كل شيء يبقى على جهازك ولا يُرسل شيء إلى الإنترنت.'
+      : '⚠ متصفحك لا يدعم File System Access API. استخدم Chrome أو Edge للكتابة المباشرة، أو اعتمد على الاستيراد ثم التصدير.';
   }
 
   function renderFsStatus() {
@@ -361,6 +367,7 @@
       u.clear($('#view'));
       $('#welcome').hidden = false;
       $('#view').hidden = true;
+      updateFsSupportNote();
     } else render();
 
     window.addEventListener('hashchange', () => {
