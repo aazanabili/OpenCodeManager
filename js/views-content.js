@@ -59,44 +59,18 @@ metadata:
     root.appendChild(c2.root);
   }
 
-  async function renderSkillFiles(box) {
-    u.clear(box);
-    const fs = NS.fs;
-    if (!fs.API.handle) {
-      box.appendChild(el('div', { class: 'empty', text: 'اربط مجلداً لعرض ملفات المهارات وتحريرها.' }));
-      return;
-    }
-    const scope = await fs.detect();
-    const dir = scope.skillsDir;
-    if (!dir) { box.appendChild(el('div', { class: 'empty', text: 'لا يوجد مجلد skills/ في المجلد المحدد.' })); return; }
-    const files = (await fs.walk(dir, 6)).filter(f => /\.(md)$/i.test(f));
-    if (!files.length) box.appendChild(el('div', { class: 'empty', text: 'لا توجد ملفات مهارات في ' + dir }));
-    files.forEach(f => {
-      const id = skillIdFromPath(f, dir);
-      box.appendChild(el('div', { class: 'list-row', style: { padding: '7px 0', borderBottom: '1px solid var(--border)' } }, [
-        el('span', { class: 'pill mono blue', text: id }),
-        el('span', { class: 'small dim', text: f.replace(dir + '/', '') }),
-        el('div', { class: 'spacer' }),
-        F.btn('تحرير', { size: 'sm', onClick: () => H().editMdFile(f, 'مهارة') }),
-        F.btn('حذف', { size: 'sm', kind: 'danger', onClick: async () => { await fs.remove(f); NS.main.render(); } })
-      ]));
+  function renderSkillFiles(box) {
+    const FV = NS.fileviews;
+    FV.renderMarkdownList(box, {
+      kind: 'skills',
+      label: 'مهارة جديدة',
+      idFrom: (rel) => {
+        if (/\/SKILL\.md$/i.test(rel)) return rel.replace(/\/SKILL\.md$/i, '');
+        return rel.replace(/\.md$/i, '').split('/').pop();
+      },
+      onOpen: (f) => FV.editMarkdown(f, 'skill'),
+      onCreate: (full, dir) => FV.createFile(full, dir, 'skill')
     });
-    box.appendChild(el('div', { class: 'flex', style: { marginTop: '12px' } }, [
-      F.btn('مهارة جديدة', { kind: 'primary', icon: '+', onClick: async () => {
-        const name = await u.promptBox('مهارة جديدة', 'معرّف المهارة (kebab-case، مطابق لاسم المجلد)', 'my-skill');
-        if (!name) return;
-        const id = u.slug(name);
-        await fs.write(dir + '/' + id + '/SKILL.md', NS.jsonc.composeFile({ name: id, description: '' }, 'Describe what this skill does and when to use it.\n'));
-        NS.main.render();
-      } })
-    ]));
-  }
-
-  function skillIdFromPath(full, dir) {
-    let rel = full.slice(dir.length + 1);
-    if (rel.endsWith('/SKILL.md')) return rel.slice(0, -'/SKILL.md'.length);
-    rel = rel.replace(/\.md$/i, '');
-    return rel.includes('/') ? rel.split('/').pop() : rel;
   }
 
   /* ===============================================================
@@ -218,31 +192,14 @@ metadata:
   }
 
   async function renderCommandFiles(box) {
-    u.clear(box);
-    const fs = NS.fs;
-    if (!fs.API.handle) { box.appendChild(el('div', { class: 'empty', text: 'اربط مجلداً لعرض ملفات الأوامر.' })); return; }
-    const scope = await fs.detect();
-    const dir = scope.commandsDir;
-    if (!dir) { box.appendChild(el('div', { class: 'empty', text: 'لا يوجد مجلد commands/ في المجلد المحدد.' })); return; }
-    const files = (await fs.walk(dir, 5)).filter(f => /\.md$/i.test(f));
-    if (!files.length) box.appendChild(el('div', { class: 'empty', text: 'لا توجد ملفات أوامر في ' + dir }));
-    files.forEach(f => {
-      box.appendChild(el('div', { class: 'list-row', style: { padding: '7px 0', borderBottom: '1px solid var(--border)' } }, [
-        el('span', { class: 'pill mono blue', text: '/' + f.slice(dir.length + 1).replace(/\.md$/i, '') }),
-        el('span', { class: 'small dim', text: f }),
-        el('div', { class: 'spacer' }),
-        F.btn('تحرير', { size: 'sm', onClick: () => H().editMdFile(f, 'أمر') }),
-        F.btn('حذف', { size: 'sm', kind: 'danger', onClick: async () => { await fs.remove(f); NS.main.render(); } })
-      ]));
+    const FV = NS.fileviews;
+    FV.renderMarkdownList(box, {
+      kind: 'commands',
+      label: 'أمر ملف جديد',
+      idFrom: (rel) => rel.replace(/\.md$/i, ''),
+      onOpen: (f) => FV.editMarkdown(f, 'command'),
+      onCreate: (full, dir) => FV.createFile(full, dir, 'command')
     });
-    box.appendChild(el('div', { class: 'flex', style: { marginTop: '12px' } }, [
-      F.btn('أمر ملف جديد', { kind: 'primary', icon: '+', onClick: async () => {
-        const name = await u.promptBox('أمر ملف جديد', 'اسم الملف (بدون .md، يمكن استخدام team/review)', 'review');
-        if (!name) return;
-        await fs.write(dir + '/' + u.slug(name) + '.md', 'Review $ARGUMENTS for bugs and missing tests.\n');
-        NS.main.render();
-      } })
-    ]));
   }
 
   /* ===============================================================
@@ -293,13 +250,17 @@ metadata:
             onChange: v => { ST.edit(x => { x.plugins[idx] = Object.assign({}, x.plugins[idx], { package: v }); }); }
           })
         ], 'c1'));
-        it.body.appendChild(F.field({
-          label: 'options', type: 'json', rows: 5, value: opts,
-          onChange: v => ST.edit(x => {
-            if (v === undefined) { if (x.plugins[idx] && typeof x.plugins[idx] === 'object') delete x.plugins[idx].options; }
-            else x.plugins[idx] = Object.assign({}, x.plugins[idx], { options: v });
+        it.body.appendChild(el('div', { class: 'field' }, [
+          el('label', { text: 'options — خيارات خاصة بهذه الإضافة' }),
+          F.typedKV({
+            value: opts || {}, addLabel: 'خيار', keyPlaceholder: 'strict',
+            emptyText: 'لا توجد خيارات',
+            onChange: v => ST.edit(x => {
+              if (v === undefined) { if (x.plugins[idx] && typeof x.plugins[idx] === 'object') delete x.plugins[idx].options; }
+              else x.plugins[idx] = Object.assign({}, x.plugins[idx], { options: v });
+            })
           })
-        }));
+        ]));
         it.body.appendChild(el('div', { class: 'flex', style: { marginTop: '10px' } }, [
           F.btn('تحويل إلى نص', { size: 'sm', onClick: () => ST.edit(x => { x.plugins[idx] = x.plugins[idx].package; }) })
         ]));
@@ -308,9 +269,11 @@ metadata:
     });
     root.appendChild(wrap);
 
-    const c = F.card({ title: 'أدوات CLI', desc: 'الإضافات الخاصة بالطرفية تُضبط في <code>cli.json</code> وتبقى فعّالة عند الاتصال بسيرفر بعيد.' });
-    c.body.appendChild(F.btn('فتح قسم إعدادات الطرفية', { onClick: () => { ST.setTarget('cli'); NS.main.go('cli-plugins'); } }));
-    root.appendChild(c.root);
+    if (ST.isGlobal()) {
+      const c = F.card({ title: 'أدوات CLI', desc: 'الإضافات الخاصة بالطرفية تُضبط في <code>cli.json</code> وتبقى فعّالة عند الاتصال بسيرفر بعيد.' });
+      c.body.appendChild(F.btn('فتح قسم إعدادات الطرفية', { onClick: () => { ST.switchDoc(ST.S.scope, 'cli'); NS.main.go('cli-plugins'); } }));
+      root.appendChild(c.root);
+    }
 
     const c2 = F.card({ title: 'إدارة من الطرفية', desc: 'أوامر opencode' });
     c2.body.appendChild(el('pre', { class: 'snippet', html: u.esc(`opencode plugin add opencode-acme-plugin@1.2.0
@@ -584,96 +547,94 @@ opencode plugin remove opencode-acme-plugin@1.2.0`) }));
     });
   }
 
-  /* ===============================================================
+/* ===============================================================
      THEMES
      =============================================================== */
   function viewThemes(root) {
+    const isProject = !ST.isGlobal();
+    const project = ST.currentProject();
+
     root.appendChild(F.pageHead({
       icon: '🎭', title: 'الثيمات', doc: 'themes',
-      desc: 'الثيم المختار يعيش في <code>cli.json</code> تحت <code>theme</code>. ملفات الثيمات المخصّصة تُوضع في مجلد <code>themes/</code> بصيغة <code>&lt;name&gt;.json</code>.'
+      desc: 'الثيم المختار يعيش في <code>cli.json</code> تحت <code>theme</code> ويم affects واجهة الطرفية فقط — لذلك هذا القسم متاح في الإعدادات العامة فقط.'
     }));
 
-    const cli = ST.readBuffer('cli');
-    let themeName = '', themeMode = 'system';
-    try {
-      const parsed = cli ? NS.jsonc.parse(cli.text) : null;
-      themeName = parsed && parsed.value && parsed.value.theme ? (parsed.value.theme.name || '') : '';
-      themeMode = parsed && parsed.value && parsed.value.theme ? (parsed.value.theme.mode || 'system') : 'system';
-    } catch (_) { }
+    if (isProject) {
+      root.appendChild(F.sectionNote('الثيمات إعداد خاص بعميل الطرفية، ولا يوجد <code>cli.json</code> داخل مشروع. اضغط «الإعدادات العامة» لتغيير الثيم.', 'warn'));
+      root.appendChild(el('div', { class: 'flex', style: { marginTop: '12px' } }, [
+        F.btn('الذهاب إلى الإعدادات العامة', { kind: 'primary', onClick: () => NS.main.openGlobal() })
+      ]));
+      return;
+    }
 
-    const c = F.card({ title: 'الثيم الحالي (cli.json)', desc: 'يُطبَّق على واجهة الطرفية' });
+    // cli.json may not be the document currently open
+    const cliBuf = S.buffers['global:cli'];
+    const cliData = (cliBuf && cliBuf.data) ? cliBuf.data : (S.target === 'cli' ? S.data : {});
+    const theme = u.get(cliData, 'theme', {}) || {};
+    const themeName = theme.name || '';
+    const themeMode = theme.mode || 'system';
+
+    const editTheme = (name, mode) => {
+      ST.switchDoc(ST.S.scope, 'cli');
+      ST.edit(x => { x.theme = { name, mode }; });
+      u.toast('حُدّث الثيم — احفظ بـ Ctrl+S', 'ok');
+      NS.main.go('cli-appearance');
+    };
+
+    const c = F.card({ title: 'الثيم الحالي', desc: 'يُطبَّق على واجهة الطرفية (cli.json)' });
     c.body.appendChild(F.grid([
       F.field({
-        label: 'theme.name', type: 'select', value: themeName || C.THEMES[0], options: C.THEMES.map(t => ({ id: t, label: t })),
-        desc: themeName && !C.THEMES.includes(themeName) ? 'الثيم الحالي «' + themeName + '» ليس في القائمة المدمجة — قد يكون ثيماً مخصصاً من themes/.' : 'اختر من الثيمات المدمجة.',
-        onChange: v => setCliTheme(v, themeMode)
+        label: 'theme.name', type: 'select', value: themeName || C.THEMES[0],
+        options: C.THEMES.map(t => ({ id: t, label: t })),
+        desc: themeName && !C.THEMES.includes(themeName)
+          ? 'الثيم الحالي «' + themeName + '» ليس مدمجاً — قد يكون ثيماً مخصصاً من مجلد themes/.'
+          : 'اختر من الثيمات المدمجة.',
+        onChange: v => editTheme(v, themeMode)
       }),
       F.field({
-        label: 'theme.mode', type: 'select', value: themeMode, options: C.CLI_THEME_MODES.map(m => ({ id: m, label: m })),
+        label: 'theme.mode', type: 'select', value: themeMode,
+        options: C.CLI_THEME_MODES.map(m => ({ id: m, label: m })),
         desc: 'system يتبع مظهر الطرفية، dark/light يثبّته.',
-        onChange: v => setCliTheme(themeName || C.THEMES[0], v)
+        onChange: v => editTheme(themeName || C.THEMES[0], v)
       })
     ], 'c2'));
-    c.body.appendChild(el('div', { class: 'flex', style: { marginTop: '10px' } }, [
-      F.btn('فتح محرر cli.json', { onClick: () => { ST.setTarget('cli'); NS.main.go('cli-appearance'); } })
-    ]));
     root.appendChild(c.root);
 
-    const c2 = F.card({ title: 'ثيمات مخصّصة في المجلد', desc: 'ملفات <code>themes/*.json</code>' });
+    const c2 = F.card({ title: 'ثيمات مخصّصة في المجلد', desc: 'ملفات <code>themes/*.json</code> — يمكنك تفعيلها أو حذفها' });
     const box = el('div', {});
     c2.body.appendChild(box);
     root.appendChild(c2.root);
+
     (async () => {
       u.clear(box);
-      const fs = NS.fs;
-      if (!fs.API.handle) { box.appendChild(el('div', { class: 'empty', text: 'اربط مجلداً لعرض الثيمات المخصّصة.' })); return; }
-      const scope = await fs.detect();
-      const dir = scope.themesDir;
-      if (!dir) { box.appendChild(el('div', { class: 'empty', text: 'لا يوجد مجلد themes/ — استخدم الثيمات المدمجة أو أنشئ مجلد themes/.' })); return; }
-      const files = (await fs.walk(dir, 3)).filter(f => f.endsWith('.json'));
-      if (!files.length) box.appendChild(el('div', { class: 'empty', text: 'لا توجد ملفات ثيم في ' + dir }));
+      const root_ = NS.fs.globalRoot();
+      if (!root_ || root_.permission !== 'granted') {
+        box.appendChild(el('div', { class: 'empty', text: 'اربط مجلد الإعدادات العامة لعرض الثيمات المخصّصة.' }));
+        return;
+      }
+      const files = (await NS.fs.walkFiles(root_.id, 'themes', 3)).filter(f => f.endsWith('.json'));
+      if (!files.length) {
+        box.appendChild(el('div', { class: 'empty', text: 'لا توجد ملفات ثيم في مجلد themes/' }));
+        return;
+      }
       files.forEach(f => {
+        const name = f.split('/').pop().replace(/\.json$/, '');
         box.appendChild(el('div', { class: 'list-row', style: { padding: '7px 0', borderBottom: '1px solid var(--border)' } }, [
-          el('span', { class: 'pill mono blue', text: f.split('/').pop().replace(/\.json$/, '') }),
+          el('span', { class: 'pill mono blue', text: name }),
+          name === themeName ? el('span', { class: 'pill green', text: 'مفعّل' }) : null,
           el('span', { class: 'small dim', text: f }),
           el('div', { class: 'spacer' }),
-          F.btn('تطبيق', { size: 'sm', kind: 'ok', onClick: () => setCliTheme(f.split('/').pop().replace(/\.json$/, ''), themeMode) }),
-          F.btn('تحرير', { size: 'sm', onClick: () => editThemeJson(f) }),
-          F.btn('حذف', { size: 'sm', kind: 'danger', onClick: async () => { await NS.fs.remove(f); NS.main.render(); } })
+          F.btn('تفعيل', { size: 'sm', kind: 'ok', onClick: () => editTheme(name, themeMode) }),
+          F.btn('حذف', {
+            size: 'sm', kind: 'danger', onClick: async () => {
+              if (!await u.confirmBox('حذف الثيم', 'سيُحذف الملف ' + f, 'حذف')) return;
+              await NS.fs.removePath(root_.id, f);
+              NS.main.render();
+            }
+          })
         ]));
       });
     })();
-  }
-
-  async function setCliTheme(name, mode) {
-    const buf = ST.readBuffer('cli') || { text: '{}', meta: null };
-    const p = NS.jsonc.parse(buf.text);
-    if (p.error) { u.toast('cli.json غير صالح: ' + p.error.message, 'err'); return; }
-    p.value.theme = { name, mode };
-    ST.setTarget('cli');
-    ST.edit(x => { x.theme = { name, mode }; });
-    u.toast('تم ضبط الثيم: ' + name, 'ok');
-  }
-
-  async function editThemeJson(path) {
-    const text = (await NS.fs.read(path)) || '{}';
-    const ta = el('textarea', { class: 'json-editor', rows: 20, spellcheck: 'false', dir: 'ltr' });
-    ta.value = text;
-    const status = el('div', { class: 'json-status' });
-    function validate() {
-      const p = NS.jsonc.parse(ta.value);
-      if (p.error) { ta.className = 'json-editor bad'; status.className = 'json-status bad'; status.textContent = p.error.message + ' (سطر ' + p.error.line + ')'; return false; }
-      ta.className = 'json-editor ok'; status.className = 'json-status ok'; status.textContent = 'JSON صالح ✓'; return true;
-    }
-    ta.addEventListener('input', u.debounce(validate, 400)); validate();
-    u.modal({
-      title: 'تحرير ' + path, wide: true,
-      body: el('div', {}, [ta, status]),
-      buttons: [
-        { label: 'إلغاء', kind: 'ghost' },
-        { label: 'حفظ', kind: 'primary', close: false, onClick: async () => { if (!validate()) return false; await NS.fs.writeSafe(path, ta.value); u.closeModal(); NS.main.render(); } }
-      ]
-    });
   }
 
   /* ===============================================================
@@ -769,24 +730,29 @@ opencode plugin remove opencode-acme-plugin@1.2.0`) }));
     (async () => {
       u.clear(box);
       const fs = NS.fs;
-      if (!fs.API.handle) {
-        box.appendChild(el('div', { class: 'empty', text: 'اربط مجلداً لتحرير AGENTS.md مباشرة.' }));
-        return;
-      }
-      const scope = await fs.detect();
-      const path = scope.instructionsFile || 'AGENTS.md';
-      const text = (await fs.read(path)) || '';
+      const c = fs.ctx();
+      if (!c) { box.appendChild(el('div', { class: 'empty', text: 'اربط مجلداً لتحرير AGENTS.md مباشرة.' })); return; }
+      const pj = c.project;
+      const rel = (pj && pj.instructionsFile) ? pj.instructionsFile : 'AGENTS.md';
+      const path = fs.join(c.prefix, rel);
+      const text = (await fs.readFile(c.rootId, path)) || '';
       const ta = el('textarea', { rows: 16, dir: 'ltr', placeholder: '# Project instructions\n\nDescribe how agents should work in this repository.' });
       ta.value = text;
       const prev = el('div', { class: 'md-preview', html: u.mdToHtml(text) });
       ta.addEventListener('input', u.debounce(() => { prev.innerHTML = u.mdToHtml(ta.value); }, 300));
-      box.appendChild(el('div', { class: 'small dim', style: { marginBottom: '8px' } }, [el('span', { class: 'pill mono', text: path }), ' ', text ? 'موجود' : 'غير موجود']));
+      box.appendChild(el('div', { class: 'small dim', style: { marginBottom: '8px' } }, [
+        el('span', { class: 'pill mono', text: path }), ' ', text ? 'موجود' : 'غير موجود (سيُنشأ عند الحفظ)'
+      ]));
       box.appendChild(el('div', { class: 'md-editor' }, [ta, prev]));
       box.appendChild(el('div', { class: 'flex', style: { marginTop: '10px' } }, [
         F.btn('حفظ ' + path, {
           kind: 'primary', onClick: async () => {
-            try { await fs.writeSafe(path, ta.value); u.toast('حُفظ ' + path, 'ok'); }
-            catch (e) { u.toast('خطأ: ' + e.message, 'err'); }
+            try {
+              const ok = await fs.ensurePermission(c.rootId);
+              if (!ok) { u.toast('لم يُمنح إذن الكتابة', 'err'); return; }
+              await fs.writeSafe(c.rootId, path, ta.value);
+              u.toast('حُفظ ' + path, 'ok');
+            } catch (e) { u.toast('خطأ: ' + e.message, 'err'); }
           }
         })
       ]));

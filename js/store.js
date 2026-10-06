@@ -176,24 +176,42 @@
      ================================================================ */
   const listeners = [];
 
+  /* Scope model
+     ────────────────────────────────────────────────────────────
+     docKey examples:
+       'global:config'          ~/.config/opencode/opencode.json(c)
+       'global:cli'             ~/.config/opencode/cli.json
+       'project:r1::acme:config'  acme/opencode.json(c)
+     Each key keeps its own data + comments + origin + undo stack,
+     so switching scope never mixes two configurations together. */
   const S = {
-    target: 'config',          // 'config' | 'cli'
-    data: {},                  // parsed root object
-    comments: [],              // preserved JSONC comments
-    text: '',                  // original text as loaded
+    docKey: 'global:config',
+    scope: { kind: 'global', label: 'الإعدادات العامة' },
+    target: 'config',          // 'config' | 'cli'  (cli only exists in global scope)
+
+    data: {},
+    comments: [],
+    text: '',
     dirty: false,
     loaded: false,
-    origin: null,              // { kind: 'fs'|'memory', dirName, fileName }
-    backups: [],               // { name, text, at }
-
-    // per-target buffers so switching cli <-> config does not lose edits
-    buffers: { config: null, cli: null },
+    origin: null,              // { kind, rootId, fileName, projectId }
 
     history: [], future: [],
+    buffers: {},               // docKey -> { data, comments, history, future, dirty, text }
+    backups: [],
 
-    fs: null,                  // set by fs.js
-    view: 'general'
+    fs: null,
+    view: 'general',
+
+    globalData: null,          // parsed global config, for "inherited from global" hints
+    projects: []
   };
+
+  /** Build the document key for a scope + target. */
+  function docKeyFor(scope, target) {
+    if (!scope || scope.kind === 'global') return 'global:' + (target || 'config');
+    return scope.id + ':' + (target || 'config');
+  }
 
   function emit(reason) { listeners.forEach(fn => { try { fn(S, reason); } catch (e) { console.error(e); } }); }
   function on(fn) { listeners.push(fn); }
@@ -258,26 +276,61 @@
     emit('load');
   }
 
-  function loadBuffer(target, text, meta) {
-    S.buffers[target] = { text, meta: meta || null };
+  function loadBuffer(key, text, meta) {
+    const parsed = J.parse(text);
+    if (parsed.error) return false;
+    S.buffers[key] = {
+      data: parsed.value && typeof parsed.value === 'object' ? parsed.value : {},
+      comments: parsed.comments, text, meta: meta || null,
+      history: [], future: [], dirty: false
+    };
+    return true;
   }
-  function readBuffer(target) { return S.buffers[target]; }
 
-  function setTarget(t) {
-    if (t === S.target) return;
-    // stash current
-    S.buffers[S.target] = { text: serialize(), meta: S.origin };
+  /** Persist the current document into its buffer (without touching the DOM). */
+  function stash() {
+    if (!S.docKey) return;
+    S.buffers[S.docKey] = {
+      data: u.clone(S.data), comments: u.clone(S.comments),
+      history: S.history.splice(0), future: S.future.splice(0),
+      dirty: S.dirty, text: S.loaded ? serialize() : null,
+      meta: S.origin, loaded: S.loaded
+    };
+  }
+
+  /**
+   * Switch to another document (global config, global cli, or a project's
+   * config). Each keeps its own edits, undo history and dirty flag.
+   */
+  function switchDoc(scope, target) {
+    let t = (target || 'config');
+    if (scope && scope.kind === 'project') t = 'config';   // no cli.json inside a project
+    const key = docKeyFor(scope, t);
+    if (key === S.docKey && S.loaded) return false;
+
+    stash();
+    S.docKey = key;
+    S.scope = scope || { kind: 'global', label: 'الإعدادات العامة' };
     S.target = t;
-    const buf = S.buffers[t];
+
+    const buf = S.buffers[key];
     if (buf) {
-      try { loadText(buf.text, buf.meta); }
-      catch (e) { S.data = {}; S.comments = []; S.loaded = false; S.dirty = false; emit('load'); }
+      S.data = u.clone(buf.data);
+      S.comments = u.clone(buf.comments);
+      S.text = buf.text || '';
+      S.history = buf.history || [];
+      S.future = buf.future || [];
+      S.dirty = !!buf.dirty;
+      S.origin = buf.meta || null;
+      S.loaded = buf.loaded !== false;
     } else {
       S.data = {}; S.comments = []; S.text = '';
-      S.loaded = false; S.dirty = false; S.origin = null;
-      updateScopeChip();
-      emit('load');
+      S.history = []; S.future = [];
+      S.dirty = false; S.loaded = false; S.origin = null;
     }
+    updateScopeChip();
+    emit('scope');
+    return true;
   }
 
   /* ----- serialisation ----- */
@@ -286,7 +339,9 @@
   function markSaved() {
     S.dirty = false;
     S.text = serialize();
-    S.buffers[S.target] = { text: S.text, meta: S.origin };
+    const buf = S.buffers[S.docKey] || {};
+    buf.dirty = false; buf.text = S.text; buf.meta = S.origin; buf.loaded = true;
+    S.buffers[S.docKey] = buf;
     updateScopeChip();
     emit('saved');
   }
@@ -297,12 +352,17 @@
     const label = document.getElementById('scopeLabel');
     if (!chip || !label) return;
     chip.classList.remove('live', 'dirty');
+    const project = currentProject();
     const parts = [];
-    if (S.origin && S.origin.dirName) parts.push(S.origin.dirName);
-    if (S.origin && S.origin.fileName) parts.push(S.origin.fileName);
-    else parts.push(S.target === 'cli' ? 'cli.json' : 'opencode.json');
-    if (S.origin && S.origin.kind === 'memory') parts.push('(غير محفوظ على القرص)');
-    label.textContent = parts.join(' · ') + (S.loaded ? '' : ' — غير محمّل');
+    // For a project the file path already contains the project folder,
+    // so showing the name twice would just be noise.
+    if (!project) parts.push('الإعدادات العامة');
+    parts.push(S.origin && S.origin.fileName
+      ? S.origin.fileName
+      : (S.target === 'cli' ? 'cli.json' : 'opencode.json'));
+    if (S.origin && S.origin.kind === 'memory') parts.push('(غير محفوظ)');
+    if (!S.loaded) parts.push('غير محمّل');
+    label.textContent = parts.join(' · ');
     if (S.origin && S.origin.kind === 'fs' && S.loaded) chip.classList.add(S.dirty ? 'dirty' : 'live');
   }
 
@@ -311,6 +371,19 @@
     S.backups.unshift({ name, text, at: Date.now() });
     if (S.backups.length > 10) S.backups.pop();
   }
+
+  /* ----- scope helpers used by views ----- */
+  const isGlobal = () => !S.scope || S.scope.kind === 'global';
+  const currentProject = () => (S.scope && S.scope.kind === 'project' ? S.scope : null);
+
+  /** Is this top-level key also defined in the global configuration? */
+  function inheritedFromGlobal(key) {
+    if (isGlobal() || !S.globalData) return false;
+    return Object.prototype.hasOwnProperty.call(S.globalData, key) &&
+      u.get(S.globalData, key) !== undefined;
+  }
+
+  function globalValue(key) { return S.globalData ? S.globalData[key] : undefined; }
 
   /* ----- convenience accessors ----- */
   const cfg = () => S.data;
@@ -325,7 +398,8 @@
   NS.C = C;
   NS.store = {
     S, on, emit, edit, checkpoint, snapshot, restore, undo, redo,
-    loadText, serialize, markSaved, setTarget, loadBuffer, readBuffer,
+    loadText, serialize, markSaved, switchDoc, stash, docKeyFor, loadBuffer,
+    isGlobal, currentProject, inheritedFromGlobal, globalValue,
     updateScopeChip, pushBackup, cfg, agents, agentIds
   };
 })(window.OCM);

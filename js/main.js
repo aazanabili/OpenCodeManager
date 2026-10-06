@@ -1,5 +1,5 @@
 /* ============================================================
-   main.js — router, navigation, folder binding, save/import/export
+   main.js — scope routing, project discovery, connect & save
    ============================================================ */
 (function (NS) {
   'use strict';
@@ -8,7 +8,7 @@
   const { el, $ } = u;
 
   /* ---------------- navigation model ---------------- */
-  const NAV = [
+  const GLOBAL_SECTIONS = [
     {
       title: 'إعدادات OpenCode', target: 'config', items: [
         { id: 'general', icon: '⚙', label: 'عام' },
@@ -23,8 +23,7 @@
         { id: 'formatters', icon: '🎨', label: 'المُنسِّقات', count: () => (u.isObj(S.data.formatter) ? Object.keys(S.data.formatter).length : (S.data.formatter ? 1 : 0)) },
         { id: 'references', icon: '📚', label: 'المراجع', count: () => Object.keys(u.isObj(S.data.references) ? S.data.references : {}).length },
         { id: 'instructions', icon: '📄', label: 'التعليمات' },
-        { id: 'themes', icon: '🎭', label: 'الثيمات' },
-        { id: 'raw', icon: '📝', label: 'محرر JSON الخام' }
+        { id: 'themes', icon: '🎭', label: 'الثيمات' }
       ]
     },
     {
@@ -39,32 +38,38 @@
         { id: 'cli-mini', icon: '🧿', label: 'Mini' },
         { id: 'cli-plugins', icon: '🧱', label: 'إضافات الطرفية' },
         { id: 'cli-keybinds', icon: '⌘', label: 'اختصارات المفاتيح' },
-        { id: 'cli-debug', icon: '🐞', label: 'التشخيص والتجارب' },
-        { id: 'cli-raw', icon: '📝', label: 'محرر cli.json' }
+        { id: 'cli-debug', icon: '🐞', label: 'التشخيص والتجارب' }
       ]
     }
   ];
 
-  const ALL_ITEMS = NAV.flatMap(g => g.items.map(i => Object.assign({}, i, { target: g.target })));
+  /** Sections valid for the current scope (cli.json is global-only). */
+  function sectionsForScope() {
+    return ST.isGlobal() ? GLOBAL_SECTIONS : [GLOBAL_SECTIONS[0]];
+  }
 
-  function itemFor(id) { return ALL_ITEMS.find(i => i.id === id); }
+  function allItems() {
+    return sectionsForScope().flatMap(g => g.items.map(i => Object.assign({}, i, { target: g.target })));
+  }
+  function itemFor(id) { return allItems().find(i => i.id === id); }
 
   /* ---------------- navigation ---------------- */
   function go(id) {
-    const it = itemFor(id);
-    if (it && it.target !== S.target) ST.setTarget(it.target);
-    if (id === 'cli-raw') id = 'raw';
+    let it = itemFor(id);
+    if (!it) it = itemFor('general');        // e.g. a cli view opened while inside a project
+    id = it.id;
+    if (it.target !== S.target) ST.switchDoc(S.scope, it.target);
     S.view = id;
     render();
     $('#main').scrollTop = 0;
-    location.hash = id;
+    if (location.hash !== '#' + id) location.hash = id;
   }
 
   function buildNav(filter) {
     const nav = $('#nav');
     u.clear(nav);
     const q = (filter || '').toLowerCase().trim();
-    NAV.forEach(group => {
+    sectionsForScope().forEach(group => {
       const items = group.items.filter(i => !q || i.label.toLowerCase().includes(q) || i.id.toLowerCase().includes(q));
       if (!items.length) return;
       nav.appendChild(el('div', { class: 'nav-group-title', text: group.title }));
@@ -76,26 +81,172 @@
         }, [
           el('span', { class: 'ico', text: i.icon }),
           el('span', { text: i.label }),
-          c ? el('span', { class: 'badge', text: String(c) }) : null
+          (c != null && c > 0) ? el('span', { class: 'badge', text: String(c) }) : null
         ]));
       });
     });
   }
 
+  /* ---------------- scope switcher ---------------- */
+  function buildScopeList() {
+    const box = $('#scopeList');
+    u.clear(box);
+    const globalRoot = NS.fs.globalRoot();
+    const projects = NS.fs.API.projects || [];
+
+    box.appendChild(el('div', { class: 'nav-group-title', text: 'نطاق الإعدادات' }));
+
+    box.appendChild(el('button', {
+      class: 'nav-item scope-item' + (ST.isGlobal() ? ' active' : ''),
+      onclick: () => openGlobal()
+    }, [
+      el('span', { class: 'ico', text: '🌐' }),
+      el('span', { class: 'scope-name', text: 'الإعدادات العامة' }),
+      el('span', { class: 'scope-sub', text: globalRoot ? globalRoot.name : 'غير مربوطة' })
+    ]));
+
+    box.appendChild(el('div', { class: 'nav-group-title', text: 'المشاريع (' + projects.length + ')' }));
+    if (!projects.length) {
+      box.appendChild(el('div', { class: 'side-empty', text: 'لم يُعثر على مشاريع بعد.' }));
+    }
+    projects.forEach(p => {
+      const active = S.scope && S.scope.kind === 'project' && S.scope.id === p.id;
+      const dirty = ST.isGlobal() ? false : false;
+      box.appendChild(el('button', {
+        class: 'nav-item scope-item' + (active ? ' active' : ''),
+        title: p.relPath || p.name,
+        onclick: () => openProject(p.id)
+      }, [
+        el('span', { class: 'ico', text: '📁' }),
+        el('span', { class: 'scope-name', text: p.name }),
+        el('span', { class: 'scope-sub', text: p.configFile ? 'إعداد' : '.opencode' })
+      ]));
+    });
+
+    box.appendChild(el('div', { class: 'side-actions' }, [
+      F.btn('مجلد عام', { size: 'sm', icon: '🌐', onClick: () => addGlobalRoot() }),
+      F.btn('مجلد مشاريع', { size: 'sm', icon: '📂', onClick: () => addProjectsRoot() }),
+      F.btn('فحص', { size: 'sm', icon: '⟳', onClick: () => rescan() })
+    ]));
+  }
+
+  /* ---------------- scope opening ---------------- */
+  function openGlobal() {
+    ST.switchDoc({ kind: 'global', label: 'الإعدادات العامة' }, ST.target === 'cli' ? 'cli' : 'config');
+    S.globalData = null;
+    render();
+  }
+
+  async function openProject(id) {
+    const p = NS.fs.projectById(id);
+    if (!p) { u.toast('المشروع غير موجود', 'err'); return; }
+    const scope = { kind: 'project', id: p.id, label: p.name, project: p };
+    ST.switchDoc(scope, 'config');
+
+    // configFile is relative to the project folder; the root is the projects root
+    const path = p.configFile ? NS.fs.join(p.relPath, p.configFile) : null;
+
+    if (!path) {
+      u.toast('لا يوجد ملف إعداد في ' + p.name + ' — سيُنشأ عند الحفظ.', 'info', 5000);
+      render();
+      return;
+    }
+    try {
+      const okPerm = await NS.fs.ensurePermission(p.rootId);
+      if (!okPerm) { u.toast('لم يُمنح إذن قراءة هذا المجلد', 'err'); return; }
+      const text = await NS.fs.readFile(p.rootId, path);
+      if (text == null) { u.toast('تعذّر قراءة ' + path, 'err'); render(); return; }
+      try {
+        ST.loadText(text, { kind: 'fs', rootId: p.rootId, fileName: path, projectId: p.id });
+      } catch (e) {
+        ST.loadText('{}', { kind: 'fs', rootId: p.rootId, fileName: path, projectId: p.id });
+        u.toast('الملف غير صالح (' + e.message + ' سطر ' + (e.line || '?') + ') — عدّله ثم احفظ', 'err', 7000);
+      }
+    } catch (e) {
+      u.toast('خطأ: ' + e.message, 'err');
+    }
+    S.globalData = readGlobalSnapshot();
+    go('general');
+  }
+
+  /** Keep a parsed copy of the global config so project views can show inheritance. */
+  function readGlobalSnapshot() {
+    const buf = S.buffers['global:config'];
+    return buf ? u.clone(buf.data) : null;
+  }
+
+  /* ---------------- roots ---------------- */
+  async function addGlobalRoot() {
+    try {
+      const root = await NS.fs.addRoot('global');
+      if (!root) return;
+      await loadGlobal();
+      u.toast('تم ربط الإعدادات العامة: ' + root.name, 'ok');
+    } catch (e) { u.toast('تعذّر الربط: ' + e.message, 'err'); }
+    render();
+  }
+
+  async function addProjectsRoot() {
+    try {
+      const root = await NS.fs.addRoot('projects');
+      if (!root) return;
+      await rescan(true);
+      u.toast('تمت إضافة مجلد المشاريع: ' + root.name, 'ok');
+    } catch (e) { u.toast('تعذّر الربط: ' + e.message, 'err'); }
+    render();
+  }
+
+  async function loadGlobal() {
+    const root = NS.fs.globalRoot();
+    if (!root) return false;
+    const ok = await NS.fs.ensurePermission(root.id);
+    if (!ok) return false;
+
+    // Land on the global document FIRST: loadText() writes into whatever
+    // document is active, so switching afterwards would resurrect a stale buffer.
+    ST.switchDoc({ kind: 'global', label: 'الإعدادات العامة' }, 'config');
+
+    for (const cand of NS.fs.PROJECT_CONFIG_FILES) {
+      const t = await NS.fs.readFile(root.id, cand);
+      if (t != null) { ST.loadText(t, { kind: 'fs', rootId: root.id, fileName: cand }); break; }
+    }
+    if (!S.loaded) ST.loadText('{}', { kind: 'fs', rootId: root.id, fileName: 'opencode.json' });
+
+    // cli.json is global-only
+    const cliText = await NS.fs.readFile(root.id, 'cli.json');
+    ST.loadBuffer('global:cli', cliText == null ? '{}' : cliText,
+      { kind: 'fs', rootId: root.id, fileName: 'cli.json' });
+    return true;
+  }
+
+  async function rescan(notify) {
+    const list = await NS.fs.scanProjects();
+    S.projects = list;
+    if (notify) u.toast(list.length ? 'عُثر على ' + list.length + ' مشروع' : 'لم يُعثر على مشاريع في المجلدات المضافة', 'info');
+    render();
+    return list;
+  }
+
   /* ---------------- render ---------------- */
   function render() {
+    buildScopeList();
     buildNav($('#navSearch').value);
     const welcome = $('#welcome'), view = $('#view');
     if (!S.loaded) {
       welcome.hidden = false; view.hidden = true;
       updateFsSupportNote();
+      updateButtons();
       return;
     }
     welcome.hidden = true; view.hidden = false;
     u.clear(view);
 
-    // sync target buttons
-    document.querySelectorAll('.target-btn').forEach(b => b.classList.toggle('active', b.dataset.target === S.target));
+    document.querySelectorAll('.target-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.target === S.target);
+      b.parentElement.hidden = !ST.isGlobal();
+    });
+
+    view.appendChild(scopeBanner());
 
     const fn = NS.views[S.view] || NS.views.general;
     try {
@@ -106,6 +257,27 @@
       view.appendChild(el('pre', { class: 'snippet', text: (e.stack || '') }));
     }
     updateButtons();
+  }
+
+  /** The strip that always says which configuration you are editing. */
+  function scopeBanner() {
+    const global = ST.isGlobal();
+    const project = ST.currentProject();
+    const box = el('div', { class: 'scope-banner ' + (global ? 'is-global' : 'is-project') });
+
+    box.appendChild(el('div', { class: 'sb-icon', text: global ? '🌐' : '📁' }));
+    box.appendChild(el('div', { class: 'sb-text' }, [
+      el('strong', { text: global ? 'الإعدادات العامة — تُطبَّق على كل المشاريع' : 'إعدادات المشروع: ' + (project ? project.label : '') }),
+      el('span', {
+        text: global
+          ? 'أي تعديل هنا يسري على كل مشروع يفتحه OpenCode على هذا الجهاز.'
+          : 'أي تعديل هنا يبقى داخل هذا المشروع فقط ولا يمسّ الإعدادات العامة.'
+      })
+    ]));
+    if (!global && project) {
+      box.appendChild(el('span', { class: 'pill mono sb-file', text: project.project && project.project.configFile ? project.project.configFile : 'لا يوجد ملف بعد' }));
+    }
+    return box;
   }
 
   function updateButtons() {
@@ -121,129 +293,54 @@
     const note = $('#fsSupport');
     if (!note) return;
     note.textContent = NS.fs.supported()
-      ? 'متصفحك يدعم القراءة والكتابة المباشرة على القرص. كل شيء يبقى على جهازك ولا يُرسل شيء إلى الإنترنت.'
-      : '⚠ متصفحك لا يدعم File System Access API. استخدم Chrome أو Edge للكتابة المباشرة، أو اعتمد على الاستيراد ثم التصدير.';
+      ? 'امنح الإذن مرة واحدة لمجلد الإعدادات العامة ومجلدات مشاريعك،。之后 تُقرأ وتُحفظ التغييرات تلقائياً على القرص.'
+      : '⚠ متصفحك لا يدعم الوصول للقرص. استخدم Chrome أو Edge.';
   }
 
   function renderFsStatus() {
     const box = $('#fsStatus'), title = $('#fsTitle'), desc = $('#fsDesc');
-    if (!NS.fs.API.handle) {
+    if (!box) return;
+    const roots = NS.fs.API.roots || [];
+    if (!roots.length) {
       box.classList.remove('live');
-      title.textContent = 'وضع عدم الاتصال';
-      desc.textContent = 'استورد ملفاً أو افتح مجلداً للكتابة';
+      title.textContent = 'غير مربوط';
+      desc.textContent = 'أضف مجلد الإعدادات العامة ومجلد مشاريعك';
       return;
     }
-    const live = NS.fs.API.permission === 'granted';
-    box.classList.toggle('live', live);
-    title.textContent = live ? 'مربوط: ' + NS.fs.API.name : 'مربوط (إذن مطلوب): ' + NS.fs.API.name;
-    desc.textContent = live
-      ? (S.origin && S.origin.fileName ? 'يكتب إلى ' + S.origin.fileName : 'مجلد متاح للقراءة والكتابة')
+    const granted = roots.filter(r => r.permission === 'granted').length;
+    box.classList.toggle('live', granted === roots.length && granted > 0);
+    title.textContent = granted === roots.length
+      ? roots.length + ' مجلد مربوط'
+      : granted + '/' + roots.length + ' مجلد بصلاحية';
+    desc.textContent = granted === roots.length
+      ? 'القراءة والحفظ تلقائيان'
       : 'اضغط «فتح مجلد» لإعادة منح الإذن';
-  }
-
-  /* ---------------- folder binding ---------------- */
-  let scopeCache = null;
-
-  async function connect() {
-    if (!NS.fs.supported()) {
-      u.toast('المتصفح لا يدعم الكتابة المباشرة. استخدم Chrome/Edge أو الاستيراد.', 'warn', 6000);
-      return;
-    }
-    try {
-      const h = await NS.fs.connect();
-      if (!h) return;
-      scopeCache = await NS.fs.detect();
-      await loadScope(scopeCache);
-      u.toast('تم الربط بمجلد ' + h.name, 'ok');
-    } catch (e) {
-      console.error(e);
-      u.toast('تعذّر الربط: ' + e.message, 'err');
-    }
-    render();
-  }
-
-  async function loadScope(scope) {
-    if (!scope) return;
-    const targetFile = S.target === 'cli' ? scope.cliPath : scope.cfgPath;
-    if (!targetFile) {
-      if (S.target === 'cli' && scope.cfgPath) {
-        S.origin = { kind: 'fs', dirName: scope.files[0] ? NS.fs.API.name : NS.fs.API.name, fileName: null };
-        ST.loadText('{}', S.origin);
-        S.origin.fileName = null;
-        u.toast('لا يوجد cli.json — أنشئه من قسم محرر cli.json أو احفظ مباشرة.', 'info');
-        return;
-      }
-      const alt = S.target === 'cli' ? scope.cfgPath : scope.cliPath;
-      u.toast('لا يوجد ' + (S.target === 'cli' ? 'cli.json' : 'opencode.json') + ' في هذا المجلد.' + (alt ? ' تم فتح ' + alt + ' بدلاً منه.' : ''), 'warn', 5000);
-      if (alt) {
-        ST.setTarget(alt.includes('cli') ? 'cli' : 'config');
-        return loadScope(scope);
-      }
-      ST.loadText('{}', { kind: 'fs', dirName: NS.fs.API.name, fileName: null });
-      return;
-    }
-    const text = (await NS.fs.read(targetFile)) || '{}';
-    ST.loadText(text, { kind: 'fs', dirName: NS.fs.API.name, fileName: targetFile });
-  }
-
-  function targetFileFor(target) {
-    if (S.origin && S.origin.kind === 'fs' && S.origin.fileName) return S.origin.fileName;
-    if (target === 'cli') return 'cli.json';
-    return scopeCache ? (scopeCache.cfgPath || 'opencode.json') : 'opencode.json';
   }
 
   /* ---------------- save ---------------- */
   async function save() {
     if (!S.loaded) { u.toast('لا يوجد ملف محمّل', 'warn'); return; }
-    if (!NS.fs.API.handle) {
-      download(S.target === 'cli' ? 'cli.json' : 'opencode.json', ST.serialize());
-      u.toast('نزّل الملف — لم يكن هناك مجلد مربوط', 'info');
+    if (!S.origin || S.origin.kind !== 'fs' || !S.origin.rootId) {
+      doExport();
       return;
     }
-    const okPerm = await NS.fs.reauthorize();
-    if (!okPerm) { u.toast('لم يُمنح إذن الكتابة', 'err'); return; }
-    const path = targetFileFor(S.target);
+    const ok = await NS.fs.ensurePermission(S.origin.rootId);
+    if (!ok) { u.toast('لم يُمنح إذن الكتابة', 'err'); return; }
+    const path = S.origin.fileName;
     try {
-      const prev = await NS.fs.read(path);
+      const prev = await NS.fs.readFile(S.origin.rootId, path);
       if (prev != null && prev !== ST.serialize()) ST.pushBackup(path, prev);
-      await NS.fs.writeSafe(path, ST.serialize());
-      S.origin = Object.assign({}, S.origin, { kind: 'fs', dirName: NS.fs.API.name, fileName: path });
+      await NS.fs.writeSafe(S.origin.rootId, path, ST.serialize());
       ST.markSaved();
-      scopeCache = await NS.fs.detect();
-      u.toast('حُفظ إلى ' + path, 'ok');
+      if (ST.isGlobal()) S.globalData = null; else S.globalData = readGlobalSnapshot();
+      u.toast('حُفظ إلى ' + path + (ST.isGlobal() ? ' (عام)' : ' — داخل المشروع فقط'), 'ok');
     } catch (e) {
       u.toast('فشل الحفظ: ' + e.message, 'err');
     }
     render();
   }
 
-  /* ---------------- import / export ---------------- */
-  function doImport() {
-    const input = $('#fileInput');
-    input.value = '';
-    input.onchange = async () => {
-      const f = input.files && input.files[0];
-      if (!f) return;
-      const text = await f.text();
-      try {
-        ST.setTarget(f.name.includes('cli') ? 'cli' : 'config');
-        ST.loadText(text, { kind: 'memory', dirName: 'استيراد', fileName: f.name });
-        u.toast('استُورد ' + f.name + ' (' + u.bytes(text.length) + ')', 'ok');
-        go(ST.target === 'cli' ? 'cli-appearance' : 'general');
-      } catch (e) {
-        u.toast('ملف غير صالح: ' + e.message + ' (سطر ' + (e.line || '?') + ')', 'err', 6000);
-        // still show it raw so the user can fix it
-        ST.setTarget(f.name.includes('cli') ? 'cli' : 'config');
-        S.data = {}; S.comments = []; S.loaded = true; S.dirty = false;
-        S.origin = { kind: 'memory', dirName: 'استيراد', fileName: f.name };
-        S.history.length = 0; S.future.length = 0;
-        go('raw');
-      }
-      render();
-    };
-    input.click();
-  }
-
+  /* ---------------- export ---------------- */
   function doExport() {
     if (!S.loaded) { u.toast('لا يوجد ملف', 'warn'); return; }
     const name = (S.origin && S.origin.fileName) || (S.target === 'cli' ? 'cli.json' : 'opencode.json');
@@ -251,46 +348,12 @@
     u.toast('نُزّل ' + name, 'ok');
   }
 
-  /* ---------------- keybind picker view ---------------- */
-  function keybindPicker(root) {
-    root.appendChild(F.pageHead({
-      icon: '⌘', title: 'إضافة تجاوز اختصار',
-      desc: 'اختر أمراً ثم أدخل القيمة.'
-    }));
-    const c = F.card({ title: 'كل الأوامر', desc: 'القيمة يمكن أن نصاً، أو مصفوفة بدائل مفصولة بفواصل، أو <code>none</code> / <code>false</code> لتعطيل الاختصار.' });
-    const grid = el('div', { class: 'grid c3' });
-    C.KEYBIND_COMMANDS.forEach(cmd => {
-      grid.appendChild(el('button', {
-        class: 'btn sm mono', style: { justifyContent: 'flex-start' }, dir: 'ltr',
-        onclick: async () => {
-          const val = await u.promptBox('تجاوز ' + cmd, 'القيمة', '');
-          if (val == null) return;
-          ST.edit(x => {
-            if (!u.isObj(x.keybinds)) x.keybinds = {};
-            const v = val.trim();
-            if (!v) delete x.keybinds[cmd];
-            else if (v === 'false' || v === 'none') x.keybinds[cmd] = false;
-            else if (v.includes(',')) x.keybinds[cmd] = v.split(',').map(s => s.trim()).filter(Boolean);
-            else x.keybinds[cmd] = v;
-          });
-          go('cli-keybinds');
-        }
-      }, cmd));
-    });
-    c.body.appendChild(grid);
-    root.appendChild(c.root);
-    root.appendChild(el('div', { class: 'flex', style: { marginTop: '12px' } }, [
-      F.btn('رجوع لاختصارات المفاتيح', { onClick: () => go('cli-keybinds') })
-    ]));
-  }
-  NS.views.keybindPicker = keybindPicker;
-
-  /* ---------------- boot ---------------- */
+  /* ---------------- bind ---------------- */
   function bind() {
-    $('#btnConnect').addEventListener('click', connect);
-    $('#btnConnect2').addEventListener('click', connect);
-    $('#btnImport').addEventListener('click', doImport);
-    $('#btnImport2').addEventListener('click', doImport);
+    $('#btnConnect').addEventListener('click', addGlobalRoot);
+    $('#btnConnect2').addEventListener('click', addGlobalRoot);
+    $('#btnImport').addEventListener('click', addGlobalRoot);
+    $('#btnImport2').addEventListener('click', addGlobalRoot);
     $('#btnExport').addEventListener('click', doExport);
     $('#btnSave').addEventListener('click', save);
     $('#btnUndo').addEventListener('click', () => { ST.undo(); render(); });
@@ -303,23 +366,7 @@
       b.addEventListener('click', () => {
         const t = b.dataset.target;
         if (t === S.target) return;
-        ST.setTarget(t);
-        // load from disk if we have a bound folder and this file exists
-        if (NS.fs.API.handle) {
-          NS.fs.detect().then(async sc => {
-            scopeCache = sc;
-            const p = t === 'cli' ? sc.cliPath : sc.cfgPath;
-            if (p && !(S.origin && S.origin.fileName === p)) {
-              const text = await NS.fs.read(p);
-              if (text != null) { ST.loadText(text, { kind: 'fs', dirName: NS.fs.API.name, fileName: p }); }
-              else {
-                ST.loadText('{}', { kind: 'fs', dirName: NS.fs.API.name, fileName: p });
-                u.toast('لا يوجد ' + p + ' — سيُنشأ عند الحفظ', 'info');
-              }
-            }
-            render();
-          });
-        } else render();
+        ST.switchDoc(S.scope, t);
         go(t === 'cli' ? 'cli-appearance' : 'general');
       });
     });
@@ -328,47 +375,37 @@
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
-      else if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
-        if (typing) return;
-        e.preventDefault(); ST.undo(); render();
-      }
-      else if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
-        if (typing) return;
-        e.preventDefault(); ST.redo(); render();
-      }
+      else if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { if (typing) return; e.preventDefault(); ST.undo(); render(); }
+      else if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { if (typing) return; e.preventDefault(); ST.redo(); render(); }
       else if (e.key === 'Escape' && !$('#modalBackdrop').hidden) u.closeModal();
     });
 
     window.addEventListener('beforeunload', (e) => {
-      if (S.dirty) { e.preventDefault(); e.returnValue = ''; }
+      const anyDirty = Object.keys(S.buffers).some(k => S.buffers[k] && S.buffers[k].dirty);
+      if (anyDirty || S.dirty) { e.preventDefault(); e.returnValue = ''; }
     });
   }
 
+  /* ---------------- boot ---------------- */
   async function boot() {
     bind();
     ST.on(() => updateButtons());
 
-    // try to restore a previously bound folder
-    if (NS.fs.supported()) {
-      const ok = await NS.fs.restore();
-      if (ok) {
-        if (NS.fs.API.permission !== 'granted') {
-          u.toast('مجلد محفوظ: ' + NS.fs.API.name + ' — انقر «فتح مجلد» لمنح الإذن مرة أخرى', 'info', 6000);
-        }
-        scopeCache = await NS.fs.detect();
-        await loadScope(scopeCache);
-      }
+    if (!NS.fs.supported()) {
+      render();
+      return;
     }
 
-    const hash = (location.hash || '').replace('#', '');
-    const start = itemFor(hash) ? hash : (S.target === 'cli' ? 'cli-appearance' : 'general');
-    S.view = start;
-    if (!S.loaded) {
-      u.clear($('#view'));
-      $('#welcome').hidden = false;
-      $('#view').hidden = true;
-      updateFsSupportNote();
-    } else render();
+    const restored = await NS.fs.restore();
+    if (restored) {
+      const need = NS.fs.needsPermission();
+      if (need.length) {
+        u.toast('بقي بحاجة إلى إذن لـ ' + need.length + ' مجلد — اضغط «فتح مجلد» للسماح.', 'warn', 8000);
+      }
+      await loadGlobal();
+      await rescan(false);
+    }
+    render();
 
     window.addEventListener('hashchange', () => {
       const h = (location.hash || '').replace('#', '');
@@ -376,6 +413,6 @@
     });
   }
 
-  NS.main = { go, render, connect, save, updateButtons, buildNav };
+  NS.main = { go, render, save, rescan, openProject, openGlobal, addGlobalRoot, addProjectsRoot, loadGlobal };
   document.addEventListener('DOMContentLoaded', boot);
 })(window.OCM);

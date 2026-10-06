@@ -154,6 +154,160 @@ opencode mcp logout sentry`) }));
 
   function normAction(name) { return String(name).replace(/[^A-Za-z0-9_-]/g, '_'); }
 
+  /* ---------------- provider settings form ----------------
+     settings is package-specific, so we surface the fields the docs name
+     for the built-in runtimes and keep a typed bag for anything else. */
+  const LIMIT_FIELDS = [
+    { key: 'context', label: 'context — نافذة السياق' },
+    { key: 'output', label: 'output — أقصى إخراج' },
+    { key: 'input', label: 'input — أقصى إدخال' }
+  ];
+  const COST_FIELDS = [
+    { key: 'input', label: 'input' }, { key: 'output', label: 'output' },
+    { key: 'cache_read', label: 'cache_read' }, { key: 'cache_write', label: 'cache_write' },
+    { key: 'reasoning', label: 'reasoning' }
+  ];
+  const MEDIA_TYPES = ['text', 'image', 'audio', 'video', 'pdf', 'file'];
+  const CAPABILITY_FLAGS = [
+    { key: 'tool_call', label: 'استدعاء الأدوات' },
+    { key: 'reasoning', label: 'استدلال' },
+    { key: 'structured_output', label: 'إخراج منظّم' },
+    { key: 'tool_attachments', label: 'مرفقات الأدوات' }
+  ];
+
+  /** Extra settings rows that matter for a given provider id. */
+  function providerExtras(pid, canonical) {
+    const id = String(pid || '');
+    if (id === 'azure' || canonical === 'azure') {
+      return [{ key: 'resourceName', label: 'resourceName (Azure)', type: 'text' }];
+    }
+    if (id === 'amazon-bedrock' || canonical === 'amazon-bedrock') {
+      return [{ key: 'profile', label: 'profile (AWS)', type: 'text' }, { key: 'region', label: 'region (AWS)', type: 'text' }];
+    }
+    if (id === 'google-vertex' || canonical === 'google-vertex') {
+      return [{ key: 'project', label: 'project (Vertex)', type: 'text' }, { key: 'location', label: 'location (Vertex)', type: 'text' }];
+    }
+    if (id === 'ollama') {
+      return [{ key: 'apiKey', label: 'apiKey (Ollama)', type: 'text' }];
+    }
+    return [];
+  }
+
+  function providerSettingsForm(pid, p) {
+    const box = el('div', {});
+    const s = u.get(p, 'settings', {}) || {};
+    const put = (key, val) => ST.edit(x => {
+      const node = u.ensure(x, ['providers', pid]);
+      if (!u.isObj(node.settings)) node.settings = {};
+      u.setOrDelete(node.settings, key, val);
+      if (!Object.keys(node.settings).length) delete node.settings;
+    });
+
+    const common = [
+      { key: 'baseURL', label: 'baseURL — نقطة النهاية', type: 'text' },
+      { key: 'apiKey', label: 'apiKey', type: 'text' },
+      { key: 'transport', label: 'transport', type: 'select', options: ['', 'http', 'websocket'] },
+      { key: 'timeout', label: 'timeout — مللي ثانية للطلب كاملاً', type: 'number' },
+      { key: 'headerTimeout', label: 'headerTimeout', type: 'number' },
+      { key: 'chunkTimeout', label: 'chunkTimeout', type: 'number' },
+      { key: 'compactionType', label: 'compaction.type', type: 'select', options: ['', 'local', 'native', 'summary'], nested: 'compaction.type' }
+    ];
+
+    box.appendChild(F.grid(common.map(f => {
+      const path = f.nested ? f.nested.split('.') : [f.key];
+      const val = f.nested ? u.get(s, f.nested) : s[f.key];
+      const onChange = v => ST.edit(x => {
+        const node = u.ensure(x, ['providers', pid]);
+        if (!u.isObj(node.settings)) node.settings = {};
+        u.setOrDelete(node.settings, path, v);
+        if (!Object.keys(node.settings).length) delete node.settings;
+      });
+      if (f.type === 'select') return F.field({ label: f.label, type: 'select', value: val || '', options: f.options, onChange: v => onChange(v || undefined) });
+      if (f.type === 'number') return F.field({ label: f.label, type: 'number', min: 0, value: val, onChange });
+      return F.field({ label: f.label, value: val, dir: 'ltr', onChange });
+    }), 'c3'));
+
+    const extras = providerExtras(pid, p.canonical);
+    if (extras.length) {
+      box.appendChild(el('div', { class: 'divider' }));
+      box.appendChild(el('h4', { class: 'small', text: 'حقول خاصة بهذا المزوّد' }));
+      box.appendChild(F.grid(extras.map(f => F.field({
+        label: f.label, value: s[f.key], dir: 'ltr',
+        onChange: v => ST.edit(x => {
+          const node = u.ensure(x, ['providers', pid]);
+          if (!u.isObj(node.settings)) node.settings = {};
+          u.setOrDelete(node.settings, f.key, v);
+          if (!Object.keys(node.settings).length) delete node.settings;
+        })
+      })), 'c3'));
+    }
+
+    // anything else the user already had
+    const known = new Set(common.map(f => f.key).concat(extras.map(f => f.key)).concat(['compaction']));
+    const rest = {};
+    Object.keys(s).forEach(k => { if (!known.has(k)) rest[k] = s[k]; });
+    box.appendChild(el('div', { class: 'divider' }));
+    box.appendChild(el('div', { class: 'field' }, [
+      el('label', { text: 'بقية إعدادات الحزمة' }),
+      F.typedKV({
+        value: rest, addLabel: 'إعداد', keyPlaceholder: 'اسم الإعداد',
+        emptyText: 'لا توجد إعدادات أخرى',
+        onChange: v => ST.edit(x => {
+          const node = u.ensure(x, ['providers', pid]);
+          const merged = {};
+          Object.keys(s).forEach(k => { if (known.has(k)) merged[k] = s[k]; });
+          Object.assign(merged, v || {});
+          if (Object.keys(merged).length) node.settings = merged; else delete node.settings;
+        })
+      })
+    ]));
+    return box;
+  }
+
+  /** Model capabilities: boolean feature flags plus media-type chips. */
+  function modelCapabilitiesForm(pid, mid, m) {
+    const cap = m.capabilities || {};
+    const put = (path, val) => ST.edit(x => {
+      const node = u.ensure(x, ['providers', pid, 'models', mid]);
+      if (!u.isObj(node.capabilities)) node.capabilities = {};
+      u.setOrDelete(node.capabilities, path, val);
+      if (!Object.keys(node.capabilities).length) delete node.capabilities;
+    });
+    const arr = (v) => Array.isArray(v) ? v : (typeof v === 'string' && v ? v.split(',').map(s => s.trim()).filter(Boolean) : []);
+
+    const card = el('div', { class: 'card', style: { marginBottom: '12px' } });
+    card.appendChild(el('div', { class: 'card-head' }, el('h3', { text: 'القدرات (capabilities)' })));
+    const body = el('div', { class: 'card-body' });
+    body.appendChild(F.grid(CAPABILITY_FLAGS.map(f => F.field({
+      label: f.label, type: 'bool', value: cap[f.key] === true, onChange: v => put(f.key, v === true ? undefined : true)
+    })), 'c4'));
+    body.appendChild(el('div', { class: 'field' }, [
+      el('label', { text: 'أنواع الوسائط المدخلة' }),
+      F.chips({ items: arr(cap.input_modalities), placeholder: 'image', onChange: v => put('input_modalities', v) })
+    ]));
+    body.appendChild(el('div', { class: 'field' }, [
+      el('label', { text: 'أنواع الوسائط المخرجة' }),
+      F.chips({ items: arr(cap.output_modalities), placeholder: 'text', onChange: v => put('output_modalities', v) })
+    ]));
+    const knownKeys = new Set(CAPABILITY_FLAGS.map(f => f.key).concat(['input_modalities', 'output_modalities']));
+    const rest = {};
+    Object.keys(cap).forEach(k => { if (!knownKeys.has(k)) rest[k] = cap[k]; });
+    if (Object.keys(rest).length) {
+      body.appendChild(el('div', { class: 'field' }, [
+        el('label', { text: 'قدرات أخرى' }),
+        F.typedKV({ value: rest, addLabel: 'قدرة', onChange: v => ST.edit(x => {
+          const node = u.ensure(x, ['providers', pid, 'models', mid]);
+          const merged = {};
+          Object.keys(cap).forEach(k => { if (knownKeys.has(k)) merged[k] = cap[k]; });
+          Object.assign(merged, v || {});
+          if (Object.keys(merged).length) node.capabilities = merged; else delete node.capabilities;
+        }) })
+      ]));
+    }
+    card.appendChild(body);
+    return card;
+  }
+
   function newServer() {
     const name = u.el('input', { type: 'text', class: 'mono', placeholder: 'context7', dir: 'ltr' });
     const type = u.el('select', {}, [el('option', { value: 'remote', text: 'remote (Streamable HTTP)' }), el('option', { value: 'local', text: 'local (stdio)' })]);
@@ -253,17 +407,19 @@ opencode mcp logout sentry`) }));
         })
       ]));
 
-      b.appendChild(F.field({
-        label: 'settings', type: 'json', rows: 6, value: p.settings,
-        hint: 'خاصة بالحزمة. أمثلة: <code>baseURL</code> · <code>apiKey</code> · <code>headerTimeout</code>/<code>chunkTimeout</code> (رقم أو false) · <code>timeout</code> · <code>transport: "websocket"</code> · <code>compaction.type</code> · Azure <code>resourceName</code> · Bedrock <code>profile</code>+<code>region</code> · Vertex <code>project</code>+<code>location</code>.',
-        onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'settings'], v))
-      }));
+      b.appendChild(el('div', { class: 'card', style: { marginBottom: '12px' } }, [
+        el('div', { class: 'card-head' }, el('h3', { text: 'إعدادات الاتصال (settings)' })),
+        el('div', { class: 'card-body' }, providerSettingsForm(pid, p))
+      ]));
 
       b.appendChild(el('div', { class: 'field' }, [
         el('label', { text: 'headers' }),
         F.kvEditor({ value: p.headers || {}, addLabel: 'رأس', onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'headers'], v)) })
       ]));
-      b.appendChild(F.field({ label: 'body', type: 'json', rows: 4, value: p.body, desc: 'حقول JSON تُدمج في جسم كل طلب', onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'body'], v)) }));
+      b.appendChild(el('div', { class: 'field' }, [
+        el('label', { text: 'body — حقول تُدمج في جسم كل طلب' }),
+        F.typedKV({ value: p.body || {}, addLabel: 'حقل', keyPlaceholder: 'metadata', onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'body'], v)) })
+      ]));
 
       // models
       b.appendChild(el('div', { class: 'divider' }));
@@ -301,13 +457,48 @@ opencode mcp logout sentry`) }));
           F.field({ label: 'package', value: m.package, dir: 'ltr', desc: 'تجاوز الحزمة لهذا النموذج', onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'package'], v)) }),
           F.field({ label: 'disabled', type: 'bool', value: m.disabled === true, onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'disabled'], true, v)) })
         ], 'c3'));
-        mb.appendChild(F.field({ label: 'limit', type: 'json', rows: 3, value: m.limit, hint: '{ "context": 200000, "output": 32000 }', onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'limit'], v)) }));
-        mb.appendChild(F.field({ label: 'cost', type: 'json', rows: 3, value: m.cost, hint: 'تسعير لكل مليون توكن: { "input": ..., "output": ..., "cache_read": ..., "cache_write": ... }', onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'cost'], v)) }));
-        mb.appendChild(F.field({ label: 'capabilities', type: 'json', rows: 4, value: m.capabilities, hint: 'دعم الأدوات وأنواع الوسائط المدخلة/المخرجة', onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'capabilities'], v)) }));
-        mb.appendChild(F.field({ label: 'compatibility', type: 'json', rows: 3, value: m.compatibility, onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'compatibility'], v)) }));
-        mb.appendChild(F.field({ label: 'settings', type: 'json', rows: 4, value: m.settings, hint: 'يتجاوز settings المزوّد لهذا النموذج', onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'settings'], v)) }));
+        mb.appendChild(el('div', { class: 'card', style: { marginBottom: '12px' } }, [
+          el('div', { class: 'card-head' }, el('h3', { text: 'حدود النموذج (limit) — بالأرقام' })),
+          el('div', { class: 'card-body' }, F.grid(LIMIT_FIELDS.map(f =>
+            F.field({
+              label: f.label, type: 'number', min: 0, value: u.get(m.limit || {}, f.key),
+              onChange: v => ST.edit(x => {
+                const node = u.ensure(x, ['providers', pid, 'models', mid]);
+                if (!u.isObj(node.limit)) node.limit = {};
+                u.setOrDelete(node.limit, f.key, v);
+                if (!Object.keys(node.limit).length) delete node.limit;
+              })
+            })), 'c3'))
+        ]));
+
+        mb.appendChild(el('div', { class: 'card', style: { marginBottom: '12px' } }, [
+          el('div', { class: 'card-head' }, el('h3', { text: 'التسعير (cost) — لكل مليون توكن' })),
+          el('div', { class: 'card-body' }, F.grid(COST_FIELDS.map(f =>
+            F.field({
+              label: f.label, type: 'number', min: 0, step: 'any', value: u.get(m.cost || {}, f.key),
+              onChange: v => ST.edit(x => {
+                const node = u.ensure(x, ['providers', pid, 'models', mid]);
+                if (!u.isObj(node.cost)) node.cost = {};
+                u.setOrDelete(node.cost, f.key, v);
+                if (!Object.keys(node.cost).length) delete node.cost;
+              })
+            })), 'c3'))
+        ]));
+
+        mb.appendChild(modelCapabilitiesForm(pid, mid, m));
+        mb.appendChild(el('div', { class: 'field' }, [
+          el('label', { text: 'settings — يتجاوز إعدادات المزوّد لهذا النموذج' }),
+          F.typedKV({ value: m.settings || {}, addLabel: 'إعداد', keyPlaceholder: 'compaction.type', onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'settings'], v)) })
+        ]));
+        mb.appendChild(el('div', { class: 'field' }, [
+          el('label', { text: 'compatibility' }),
+          F.typedKV({ value: m.compatibility || {}, addLabel: 'قاعدة توافق', onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'compatibility'], v)) })
+        ]));
         mb.appendChild(el('div', { class: 'field' }, [el('label', { text: 'headers' }), F.kvEditor({ value: m.headers || {}, onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'headers'], v)) })]));
-        mb.appendChild(F.field({ label: 'body', type: 'json', rows: 3, value: m.body, onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'body'], v)) }));
+        mb.appendChild(el('div', { class: 'field' }, [
+          el('label', { text: 'body' }),
+          F.typedKV({ value: m.body || {}, addLabel: 'حقل', onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'body'], v)) })
+        ]));
 
         // variants
         const vars = Array.isArray(m.variants) ? m.variants : [];
@@ -329,9 +520,15 @@ opencode mcp logout sentry`) }));
                   F.field({ label: 'id', value: vv.id, onChange: v => ST.edit(x => x.providers[pid].models[mid].variants[vi].id = v) }),
                   F.field({ label: 'name', value: vv.name, onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'variants', vi, 'name'], v)) })
                 ], 'c2'),
-                F.field({ label: 'settings', type: 'json', rows: 3, value: vv.settings, onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'variants', vi, 'settings'], v)) }),
                 el('div', { class: 'field' }, [el('label', { text: 'headers' }), F.kvEditor({ value: vv.headers || {}, onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'variants', vi, 'headers'], v)) })]),
-                F.field({ label: 'body', type: 'json', rows: 3, value: vv.body, onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'variants', vi, 'body'], v)) })
+                el('div', { class: 'field' }, [
+                  el('label', { text: 'settings' }),
+                  F.typedKV({ value: vv.settings || {}, addLabel: 'إعداد', onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'variants', vi, 'settings'], v)) })
+                ]),
+                el('div', { class: 'field' }, [
+                  el('label', { text: 'body' }),
+                  F.typedKV({ value: vv.body || {}, addLabel: 'حقل', onChange: v => ST.edit(x => u.setOrDelete(x, ['providers', pid, 'models', mid, 'variants', vi, 'body'], v)) })
+                ])
               ])
             ]));
           });
@@ -398,138 +595,6 @@ opencode mcp logout sentry`) }));
     });
   }
 
-  /* ===============================================================
-     RAW JSON
-     =============================================================== */
-  function viewRaw(root) {
-    root.appendChild(F.pageHead({
-      icon: '📄', title: 'محرر JSON الخام',
-      desc: 'تحرير مباشر لكامل الملف مع الحفاظ على التعليقات. استخدمه لأي حقل غير معروض في الأقسام الأخرى.'
-    }));
-
-    const pathLabel = ST.S.origin && ST.S.origin.fileName ? ST.S.origin.fileName : (ST.S.target === 'cli' ? 'cli.json' : 'opencode.json');
-
-    const ta = el('textarea', { class: 'json-editor', rows: 26, spellcheck: 'false', dir: 'ltr' });
-    const status = el('div', { class: 'json-status' });
-    const pathIn = el('input', { type: 'text', class: 'mono', dir: 'ltr', value: pathLabel });
-
-    function load() {
-      ta.value = ST.serialize();
-      ta.className = 'json-editor ok';
-      status.className = 'json-status ok';
-      status.textContent = '✓ محمّل — ' + ta.value.split('\n').length + ' سطر';
-    }
-    function validate() {
-      const p = NS.jsonc.parse(ta.value);
-      if (p.error) {
-        ta.className = 'json-editor bad';
-        status.className = 'json-status bad';
-        status.textContent = '✕ خطأ: ' + p.error.message + ' (سطر ' + p.error.line + '، عمود ' + p.error.column + ')';
-        return false;
-      }
-      ta.className = 'json-editor ok';
-      status.className = 'json-status ok';
-      status.textContent = '✓ JSON صالح — ' + Object.keys(p.value || {}).length + ' مفتاحاً علوياً';
-      return true;
-    }
-    ta.addEventListener('input', u.debounce(validate, 420));
-
-    const preview = el('pre', { class: 'snippet' });
-    function updatePreview() {
-      const p = NS.jsonc.parse(ta.value);
-      preview.textContent = p.error ? '— غير صالح —' : JSON.stringify(p.value, null, 2);
-    }
-    ta.addEventListener('input', u.debounce(updatePreview, 420));
-
-    const c = F.card({ title: 'المحتوى', desc: 'التعديلات هنا لا تدخل الحالة حتى تضغط «تطبيق».' });
-    c.body.appendChild(ta);
-    c.body.appendChild(status);
-    c.body.appendChild(el('div', { class: 'flex wrap', style: { marginTop: '12px' } }, [
-      F.btn('تطبيق على الحالة', {
-        kind: 'primary', icon: '✓', onClick: () => {
-          if (!validate()) { u.toast('صحّح الخطأ أولاً', 'err'); return; }
-          const p = NS.jsonc.parse(ta.value);
-          ST.edit(x => { Object.keys(x).forEach(k => delete x[k]); Object.assign(x, p.value); });
-          ta.value = ST.serialize();
-          updatePreview();
-          u.toast('طُبّق', 'ok');
-          NS.main.render();
-        }
-      }),
-      F.btn('إعادة تحميل من الحالة', { onClick: load }),
-      F.btn('تنسيق تلقائي', { onClick: () => { const p = NS.jsonc.parse(ta.value); if (p.error) { u.toast('غير صالح', 'err'); return; } ta.value = NS.jsonc.stringify(p.value, p.comments, { indent: 2 }); validate(); updatePreview(); } }),
-      F.btn('نسخ', {
-        onClick: async () => { try { await navigator.clipboard.writeText(ta.value); u.toast('نُسخ', 'ok'); } catch (e) { u.toast('Clipboard غير متاح', 'err'); } }
-      })
-    ]));
-    root.appendChild(c.root);
-
-    const c2 = F.card({ title: 'معاينة JSON المُحلَّل', desc: 'النتيجة بعد إزالة التعليقات' });
-    c2.body.appendChild(preview);
-    root.appendChild(c2.root);
-
-    const c3 = F.card({ title: 'النسخ الاحتياطية', desc: 'يحفظ التطبيق نسخة <code>.backup</code> بجانب الملف قبل كل كتابة' });
-    const bb = el('div', {});
-    c3.body.appendChild(bb);
-    root.appendChild(c3.root);
-    (async () => {
-      u.clear(bb);
-      const buf = ST.readBuffer(ST.S.target);
-      if (ST.S.backups.length) {
-        ST.S.backups.forEach(bk => bb.appendChild(el('div', { class: 'list-row' }, [
-          el('span', { class: 'pill mono', text: bk.name }),
-          el('span', { class: 'small dim', text: u.timeAgo(bk.at) + ' · ' + u.bytes(bk.text.length) }),
-          el('div', { class: 'spacer' }),
-          F.btn('استعادة', { size: 'sm', onClick: () => { ST.edit(() => true); ST.loadText(bk.text, ST.S.origin); u.toast('استُعيدت النسخة', 'ok'); NS.main.render(); } })
-        ])));
-      } else bb.appendChild(el('div', { class: 'empty', text: 'لا توجد نسخ في الذاكرة بعد.' }));
-
-      if (NS.fs.API.handle) {
-        const cur = pathIn.value;
-        const bpath = cur + '.backup';
-        const existing = await NS.fs.read(bpath);
-        if (existing != null) {
-          bb.appendChild(el('div', { class: 'list-row', style: { marginTop: '8px' } }, [
-            el('span', { class: 'pill mono green', text: bpath }),
-            el('span', { class: 'small dim', text: u.bytes(existing.length) + ' على القرص' }),
-            el('div', { class: 'spacer' }),
-            F.btn('فتح', { size: 'sm', onClick: () => { ta.value = existing; validate(); updatePreview(); u.toast('حُمّلت النسخة', 'ok'); } })
-          ]));
-        }
-      }
-    })();
-
-    load(); updatePreview();
-
-    const c4 = F.card({ title: 'مسار الحفظ', desc: 'أين يُكتب الملف فعلياً' });
-    c4.body.appendChild(F.field({ label: 'اسم الملف داخل المجلد', value: pathIn.value, dir: 'ltr', onChange: v => { pathIn.value = v; } }));
-    c4.body.appendChild(el('div', { class: 'flex', style: { marginTop: '10px' } }, [
-      F.btn('حفظ إلى هذا المسار', { kind: 'primary', onClick: async () => {
-        const ok = await saveTo(pathIn.value.trim());
-        if (ok) { ST.markSaved(); }
-      } }),
-      F.btn('حفظ كملف جديد', { onClick: async () => { const n = await u.promptBox('حفظ كملف جديد', 'اسم الملف', pathIn.value); if (n) { const ok = await saveTo(n.trim()); if (ok) ST.markSaved(); } } })
-    ]));
-    root.appendChild(c4.root);
-  }
-
-  async function saveTo(path) {
-    if (!NS.fs.API.handle) { u.toast('اربط مجلداً أولاً', 'warn'); return false; }
-    const ok = await NS.fs.reauthorize();
-    if (!ok) { u.toast('لم يُمنح إذن الكتابة', 'err'); return false; }
-    try {
-      await NS.fs.writeSafe(path, ST.serialize());
-      ST.S.origin = Object.assign({}, ST.S.origin, { fileName: path, kind: 'fs', dirName: NS.fs.API.name });
-      ST.updateScopeChip();
-      u.toast('حُفظ إلى ' + path, 'ok');
-      return true;
-    } catch (e) {
-      u.toast('فشل الحفظ: ' + e.message, 'err');
-      return false;
-    }
-  }
-
   NS.views = NS.views || {};
-  Object.assign(NS.views, { mcp: viewMcp, providers: viewProviders, raw: viewRaw });
-  NS.views.saveTo = saveTo;
+  Object.assign(NS.views, { mcp: viewMcp, providers: viewProviders });
 })(window.OCM);

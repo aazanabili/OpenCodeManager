@@ -119,19 +119,13 @@
         });
         return sel;
       }
-      case 'json': {
-        const ta = el('textarea', { id, class: 'code', rows: opts.rows || 8, spellcheck: 'false' });
-        const status = el('div', { class: 'json-status' });
-        ta.value = opts.value == null ? '' : (typeof opts.value === 'string' ? opts.value : JSON.stringify(opts.value, null, 2));
-        const validate = () => {
-          if (!ta.value.trim()) { ta.className = 'json-editor ok'; status.className = 'json-status ok'; status.textContent = 'فارغ — سيُحذف الحقل'; return true; }
-          try { const p = NS.jsonc.parse(ta.value); if (p.error) throw new Error(p.error.message + ' (سطر ' + p.error.line + ')'); ta.className = 'json-editor ok'; status.className = 'json-status ok'; status.textContent = 'JSON صالح ✓'; return true; }
-          catch (e) { ta.className = 'json-editor bad'; status.className = 'json-status bad'; status.textContent = 'خطأ: ' + e.message; return false; }
-        };
-        ta.className = 'json-editor';
-        ta.addEventListener('input', u.debounce(() => { if (validate()) emitVal(ta.value.trim() ? NS.jsonc.parse(ta.value).value : undefined); }, 400));
-        validate();
-        return el('div', {}, [ta, status]);
+      case 'typedkv': {
+        // A key/value editor with an explicit value type. Replaces raw JSON
+        // for package-specific option bags.
+        return typedKV(opts);
+      }
+      case 'chips': {
+        return chips(opts);
       }
       case 'model': {
         const inp = el('input', { type: 'text', id, class: 'mono', placeholder: 'anthropic/claude-sonnet-4-5#high', dir: 'ltr' });
@@ -315,6 +309,128 @@
     return box;
   }
 
+  /* ---------------- typed key/value editor ----------------
+     Package-specific option bags (settings, body, capabilities, …) have no
+     fixed schema in the docs. Rather than handing the user a JSON text box,
+     every entry gets an explicit value type. */
+  const KV_TYPES = [
+    { id: 'text', label: 'نص' },
+    { id: 'number', label: 'رقم' },
+    { id: 'bool', label: 'صح/خطأ' }
+  ];
+
+  function typedKV(opts) {
+    const source = u.isObj(opts.value) ? u.clone(opts.value) : {};
+    const wrap = el('div', { class: 'typedkv' });
+    const commit = () => opts.onChange && opts.onChange(Object.keys(source).length ? u.clone(source) : undefined);
+
+    function render() {
+      u.clear(wrap);
+      const keys = Object.keys(source);
+      if (!keys.length) wrap.appendChild(el('div', { class: 'empty', text: opts.emptyText || 'لا توجد مفاتيح' }));
+
+      keys.forEach(k => {
+        const cur = source[k];
+        const kind = typeof cur === 'number' ? 'number' : typeof cur === 'boolean' ? 'bool' : 'text';
+        const keyIn = el('input', { type: 'text', class: 'mono', value: k, placeholder: opts.keyPlaceholder || 'المفتاح' });
+        const typeSel = el('select', {}, KV_TYPES.map(t => el('option', { value: t.id, text: t.label })));
+        typeSel.value = kind;
+
+        const valWrap = el('div', { class: 'kv-val' });
+        function renderValue() {
+          u.clear(valWrap);
+          const t = typeSel.value;
+          if (t === 'bool') {
+            const sw = el('input', { type: 'checkbox' });
+            sw.checked = source[k] === true;
+            sw.addEventListener('change', () => { source[k] = sw.checked; commit(); });
+            valWrap.appendChild(el('label', { class: 'switch' }, [sw, el('span', { class: 'slider' })]));
+            return;
+          }
+          const inp = el('input', { type: 'text', class: 'mono', dir: 'ltr', value: source[k] == null ? '' : String(source[k]), placeholder: t === 'number' ? '123' : 'القيمة' });
+          inp.addEventListener('input', u.debounce(() => {
+            if (t === 'number') {
+              const n = Number(inp.value);
+              source[k] = inp.value.trim() === '' ? '' : (Number.isFinite(n) ? n : 0);
+            } else source[k] = inp.value;
+            commit();
+          }, 400));
+          valWrap.appendChild(inp);
+        }
+        renderValue();
+
+        typeSel.addEventListener('change', () => {
+          const t = typeSel.value;
+          if (t === 'number') source[k] = Number(source[k]) || 0;
+          else if (t === 'bool') source[k] = source[k] === true;
+          else source[k] = source[k] == null ? '' : String(source[k]);
+          commit(); renderValue(); render();
+        });
+
+        keyIn.addEventListener('change', () => {
+          const nk = keyIn.value.trim();
+          if (!nk || nk === k) { keyIn.value = k; return; }
+          const next = {};
+          keys.forEach(kk => { next[kk === k ? nk : kk] = source[kk]; });
+          Object.keys(source).forEach(x => delete source[x]);
+          Object.assign(source, next);
+          commit(); render();
+        });
+
+        wrap.appendChild(el('div', { class: 'typedkv-row' }, [
+          keyIn, typeSel, valWrap,
+          el('button', {
+            class: 'btn ghost sm danger', title: 'حذف',
+            onclick: () => { delete source[k]; commit(); render(); }
+          }, '✕')
+        ]));
+      });
+
+      wrap.appendChild(el('div', { class: 'flex', style: { marginTop: '9px' } }, [
+        el('button', {
+          class: 'btn sm',
+          onclick: () => {
+            let i = 1;
+            while (Object.prototype.hasOwnProperty.call(source, 'key' + i)) i++;
+            source['key' + i] = '';
+            commit(); render();
+          }
+        }, '+ ' + (opts.addLabel || 'إضافة مفتاح'))
+      ]));
+      if (opts.hint) wrap.appendChild(hint(opts.hint));
+    }
+    render();
+    return wrap;
+  }
+
+  /* ---------------- chips (list of short strings) ---------------- */
+  function chips(opts) {
+    const items = Array.isArray(opts.items) ? opts.items.slice() : [];
+    const wrap = el('div', { class: 'chips-editor' });
+    const commit = () => opts.onChange && opts.onChange(items.length ? items.slice() : undefined);
+
+    function render() {
+      u.clear(wrap);
+      if (!items.length) wrap.appendChild(el('div', { class: 'empty', text: opts.emptyText || 'لا توجد عناصر' }));
+      items.forEach((v, i) => wrap.appendChild(el('span', { class: 'chip-input' }, [
+        el('span', { class: 'ltr', text: v }),
+        el('button', { title: 'حذف', onclick: () => { items.splice(i, 1); commit(); render(); } }, '×')
+      ])));
+      const inp = el('input', { type: 'text', class: 'mono', dir: 'ltr', placeholder: opts.placeholder || '', style: { maxWidth: '220px' } });
+      const add = () => {
+        const v = inp.value.trim();
+        if (!v) return;
+        items.push(v); inp.value = '';
+        commit(); render();
+      };
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+      wrap.appendChild(el('div', { class: 'chips-add' }, [inp, el('button', { class: 'btn sm', onclick: add }, '+')]));
+      if (opts.hint) wrap.appendChild(hint(opts.hint));
+    }
+    render();
+    return wrap;
+  }
+
   /* ---------------- collapsible item card ---------------- */
   function item(opts) {
     const body = el('div', { class: 'item-body' });
@@ -368,5 +484,5 @@
     }, opts.icon ? [el('span', { text: opts.icon }), label] : label);
   }
 
-  NS.F = { pageHead, card, field, listEditor, kvEditor, rulesTable, item, subtabs, grid, btn, hint, sectionNote };
+  NS.F = { pageHead, card, field, listEditor, kvEditor, typedKV, chips, rulesTable, item, subtabs, grid, btn, hint, sectionNote, KV_TYPES };
 })(window.OCM);

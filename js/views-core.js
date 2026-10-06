@@ -107,6 +107,67 @@
 
   function agentCount() { return Object.keys(ST.agents()).length; }
 
+  const CONFIG_KEY_LABELS = {
+    model: 'النموذج الافتراضي', default_agent: 'الوكيل الافتراضي', shell: 'الصدفة',
+    username: 'اسم المستخدم', update: 'التحديثات', share: 'المشاركة', snapshots: 'اللقطات',
+    permissions: 'الصلاحيات', agents: 'الوكلاء', mcp: 'خوادم MCP', providers: 'المزوّدون',
+    skills: 'مصادر المهارات', commands: 'الأوامر', plugins: 'الإضافات',
+    formatter: 'المُنسِّقات', references: 'المراجع', instructions: 'التعليمات',
+    websearch: 'البحث في الويب', compaction: 'ضغط السياق', warming: 'التسخين',
+    worktree: 'شجرة العمل', watcher: 'المراقب', tool_output: 'إخراج الأدوات',
+    media: 'معالجة الصور', experimental: 'خيارات تجريبية'
+  };
+  const SKIP_COMPARE = new Set(['$schema']);
+
+  /**
+   * Project scope only: show which top-level keys this project redefines and
+   * which it simply inherits from the global configuration.
+   */
+  function globalCompareCard() {
+    if (ST.isGlobal() || !S.globalData) return el('span');
+    const g = S.globalData;
+    const projectKeys = Object.keys(S.data).filter(k => !SKIP_COMPARE.has(k));
+    const shared = projectKeys.filter(k => Object.prototype.hasOwnProperty.call(g, k));
+    const onlyHere = projectKeys.filter(k => !shared.includes(k));
+    const onlyGlobal = Object.keys(g).filter(k => !SKIP_COMPARE.has(k) && !shared.includes(k));
+
+    const c = F.card({
+      title: 'مقارنة مع الإعدادات العامة',
+      desc: 'ما الذي يحدّده هذا المشروع وما الذي يرثه من الملف العام.'
+    });
+    const label = (k) => CONFIG_KEY_LABELS[k] || k;
+
+    const mk = (title, keys, pillCls, note) => {
+      const row = el('div', { class: 'cmp-row' }, [el('div', { class: 'cmp-title', text: title })]);
+      if (!keys.length) row.appendChild(el('span', { class: 'muted small', text: '— لا شيء —' }));
+      keys.forEach(k => row.appendChild(el('span', { class: 'pill mono ' + pillCls, text: label(k), title: k })));
+      return row;
+    };
+    c.body.appendChild(mk('محدّد هنا (يتجاوز العام)', shared, 'amber', ''));
+    c.body.appendChild(mk('خاص بهذا المشروع فقط', onlyHere, 'blue', ''));
+    c.body.appendChild(mk('يأتي من الإعدادات العامة فقط', onlyGlobal, 'purple', ''));
+    c.body.appendChild(F.hint('مفتاح محدّد في المشروع يتجاوز قيمة العامة عند التشغيل. مفتاح غير معرّف هنا يُورَث من الملف العام.'));
+    c.body.appendChild(el('div', { class: 'flex', style: { marginTop: '10px' } }, [
+      F.btn('عرض القيم العامة', {
+        onClick: () => showGlobalValues(shared.concat(onlyGlobal))
+      })
+    ]));
+    return c.root;
+  }
+
+  function showGlobalValues(keys) {
+    const g = S.globalData || {};
+    const body = el('div', {});
+    if (!keys.length) body.appendChild(el('div', { class: 'empty', text: 'لا توجد مفاتيح مشتركة.' }));
+    keys.forEach(k => {
+      body.appendChild(el('div', { class: 'cmp-global-row' }, [
+        el('span', { class: 'pill mono', text: CONFIG_KEY_LABELS[k] || k }),
+        el('span', { class: 'small dim', text: JSON.stringify(g[k]).slice(0, 180) })
+      ]));
+    });
+    u.modal({ title: 'القيم المعرّفة في الإعدادات العامة', body });
+  }
+
   /* ===============================================================
      GENERAL
      =============================================================== */
@@ -115,14 +176,16 @@
     const re = () => viewGeneral(root);
 
     root.appendChild(F.pageHead({
-      icon: '⚙', title: 'الإعدادات العامة', doc: DOC.config,
-      desc: 'الإعدادات الأساسية shared بين كل الوكلاء في ملف <code>opencode.json(c)</code>. التزم بترتيب أولوية ملفات OpenCode: ملف عام ← ملفات المشروع من الخارج إلى الداخل ← <code>.opencode/</code>.'
+      icon: '⚙', title: ST.isGlobal() ? 'الإعدادات العامة' : 'إعدادات المشروع', doc: DOC.config,
+      desc: 'الإعدادات الأساسية التي <code>opencode.json(c)</code> يقرؤها. ترتيب أولوية OpenCode: ملف عام ← ملفات المشروع من الخارج إلى الداخل ← <code>.opencode/</code>، والأقرب يفوز.'
     }));
+
+    root.appendChild(globalCompareCard());
 
     // ---- basics
     const c1 = F.card({ title: 'الأساسيات', desc: 'أهم المفاتيح على مستوى الملف' });
     c1.body.appendChild(F.grid([
-      F.field({ label: '$schema', value: d.$schema, placeholder: 'https://opencode.ai/config.json', onChange: v => ST.edit(x => u.setOrDelete(x, '$schema', v)) }),
+      F.field({ label: '$schema', value: d.$schema, placeholder: 'https://opencode.ai/config.json', onChange: v => ST.edit(x => u.setOrDelete(x, '$schema', v)), badge: 'General' }),
       F.field({ label: 'الصدفة (shell)', value: d.shell, placeholder: '/bin/zsh', desc: 'الصدفة المستخدمة في الطرفية وأداة bash', onChange: v => ST.edit(x => u.setOrDelete(x, 'shell', v)) }),
       F.field({
         label: 'النموذج الافتراضي', type: 'model', value: typeof d.model === 'string' ? d.model : '',
@@ -251,7 +314,7 @@
       el('a', { class: 'btn', href: 'https://opencode.ai/config.json', target: '_blank', rel: 'noopener' }, 'فتح config.json'),
       el('a', { class: 'btn', href: 'https://opencode.ai/v2/cli.json', target: '_blank', rel: 'noopener' }, 'فتح cli.json')
     ]));
-    c8.body.appendChild(F.hint('مخطط JSON المنشور قد يسبق أو يتأخر عن توثيق V2. هذه الواجهة تتبع توثيق V2؛ استخدم محرر JSON الخام لأي حقل غير معروض.'));
+    c8.body.appendChild(F.hint('مخطط JSON المنشور قد يسبق أو يتأخر عن توثيق V2. هذه الواجهة تتبع توثيق V2 بالكامل، ولكل حقل موثّق نموذج مخصّص هنا.'));
     root.appendChild(c8.root);
   }
 
@@ -359,8 +422,7 @@
         { id: 'general', label: 'عام' },
         { id: 'prompt', label: 'البرومبت' },
         { id: 'perms', label: 'الصلاحيات', count: (a.permissions || []).length },
-        { id: 'model', label: 'النموذج والطلب' },
-        { id: 'adv', label: 'متقدم' }
+        { id: 'model', label: 'النموذج والطلب' }
       ], (t) => { tab = t; renderBody(); }, tab));
 
       const ag = () => ST.agents()[id] || (ST.agents()[id] = {});
@@ -438,19 +500,13 @@
           addLabel: 'رأس (header)', onChange: v => put('request.headers', v)
         }));
         body.appendChild(el('div', { style: { height: '10px' } }));
-        body.appendChild(F.field({
-          label: 'حقول جسم الطلب (body)', type: 'json', rows: 5, value: u.get(a, 'request.body'),
-          hint: 'مثال: <code>{ "temperature": 0.1 }</code>',
-          onChange: v => put('request.body', v)
-        }));
-      }
-
-      if (tab === 'adv') {
-        body.appendChild(F.field({
-          label: 'تعريف الوكيل (JSON خام)', type: 'json', rows: 12, value: a,
-          hint: 'أي حقل إضافي غير معروض أعلاه يمكن إضافته هنا مباشرة.',
-          onChange: v => { if (v === undefined) ST.edit(x => { delete x.agents; }); else ST.edit(x => x.agents[id] = v); }
-        }));
+        body.appendChild(el('div', { class: 'field' }, [
+          el('label', { text: 'حقول جسم الطلب (body)' }),
+          F.typedKV({
+            value: u.get(a, 'request.body', {}), addLabel: 'حقل جسم الطلب', keyPlaceholder: 'temperature',
+            emptyText: 'لا توجد حقول في جسم الطلب', onChange: v => put('request.body', v)
+          })
+        ]));
       }
     };
     renderBody();
@@ -526,108 +582,14 @@
     u.download(id + '.md', text, 'text/markdown;charset=utf-8');
   }
 
-  async function renderAgentFiles(box) {
-    u.clear(box);
-    const fs = NS.fs;
-    if (!fs.API.handle) {
-      box.appendChild(el('div', { class: 'empty', text: 'اربط مجلداً لعرض ملفات الوكلاء(create/read). أو أنشئ الوكيل كملف عبر التصدير.' }));
-      box.appendChild(el('div', { class: 'flex' }, [
-        F.btn('فتح مجلد', { kind: 'primary', onClick: () => NS.main.connect() })
-      ]));
-      return;
-    }
-    const scope = await fs.detect();
-    const dir = scope.agentsDir;
-    if (!dir) {
-      box.appendChild(el('div', { class: 'empty', text: 'لا يوجد مجلد agents/ في المجلد المحدد.' }));
-      box.appendChild(F.btn('إنشاء مجلد agents/', { kind: 'primary', onClick: async () => { await fs.write(dir0(dir) + '/.keep', ''); NS.main.render(); } }));
-      return;
-    }
-    const files = (await fs.walk(dir)).filter(f => f.endsWith('.md'));
-    if (!files.length) box.appendChild(el('div', { class: 'empty', text: 'لا توجد ملفات .md في ' + dir }));
-    files.forEach(f => {
-      const rel = f.slice(dir.length + 1);
-      box.appendChild(el('div', { class: 'list-row', style: { padding: '7px 0', borderBottom: '1px solid var(--border)' } }, [
-        el('span', { class: 'pill mono', text: rel.replace(/\.md$/, '') }),
-        el('span', { class: 'small dim', text: f }),
-        el('div', { class: 'spacer' }),
-        F.btn('تعديل', { size: 'sm', onClick: () => editMdFile(f, 'وكيل') }),
-        F.btn('حذف', { size: 'sm', kind: 'danger', onClick: async () => { await fs.remove(f); NS.main.render(); } })
-      ]));
-    });
-    box.appendChild(el('div', { class: 'flex', style: { marginTop: '12px' } }, [
-      F.btn('ملف وكيل جديد', { kind: 'primary', icon: '+', onClick: async () => {
-        const name = await u.promptBox('ملف وكيل جديد', 'اسم الملف (بدون .md)', 'reviewer');
-        if (!name) return;
-        const path = dir + '/' + u.slug(name) + '.md';
-        const content = NS.jsonc.composeFile({ description: '', mode: 'subagent' }, '');
-        await fs.write(path, content);
-        NS.main.render();
-      } })
-    ]));
-  }
-
-  function dir0(d) { return d || ''; }
-
-  async function editMdFile(path, kind) {
-    const fs = NS.fs;
-    const text = (await fs.read(path)) || '';
-    const fmWrap = el('div', { class: 'grid c2' });
-    const bodyTa = el('textarea', { rows: 16, dir: 'ltr' });
-    const parsed = NS.jsonc.parseFrontmatter(text);
-    let data = u.clone(parsed.data);
-    bodyTa.value = parsed.body;
-
-    function renderFm() {
-      u.clear(fmWrap);
-      const fields = kind === 'وكيل' ? [
-        { k: 'description', label: 'الوصف' }, { k: 'mode', label: 'mode', type: 'select', options: ['primary', 'subagent', 'all'] },
-        { k: 'model', label: 'model' }, { k: 'steps', label: 'steps', type: 'number' },
-        { k: 'color', label: 'color' }, { k: 'hidden', label: 'hidden', type: 'bool' },
-        { k: 'disabled', label: 'disabled', type: 'bool' }
-      ] : [
-        { k: 'description', label: 'الوصف' }, { k: 'agent', label: 'agent' }, { k: 'model', label: 'model' },
-        { k: 'subagent', label: 'subagent', type: 'bool' }
-      ];
-      fields.forEach(f => {
-        let node;
-        if (f.type === 'bool') node = F.field({ label: f.label, type: 'bool', value: data[f.k] === true, onChange: v => { if (v) data[f.k] = true; else delete data[f.k]; } });
-        else if (f.type === 'select') node = F.field({ label: f.label, type: 'select', value: data[f.k] || f.options[0], options: f.options, emptyValue: undefined, onChange: v => data[f.k] = v });
-        else if (f.type === 'number') node = F.field({ label: f.label, type: 'number', value: data[f.k], onChange: v => { if (v == null) delete data[f.k]; else data[f.k] = v; } });
-        else node = F.field({ label: f.label, value: data[f.k], onChange: v => u.setOrDelete(data, f.k, v) });
-        fmWrap.appendChild(node);
-      });
-      if (kind === 'وكيل') {
-        fmWrap.appendChild(el('div', { class: 'field' }, [
-          el('label', { text: 'permissions' }),
-          el('div', {}, F.rulesTable({
-            value: data.permissions || [], actions: C.PERM_ACTIONS,
-            onChange: v => { if (v.length) data.permissions = v; else delete data.permissions; }
-          }))
-        ]));
-      }
-    }
-    renderFm();
-
-    const body = el('div', {}, [
-      el('div', { class: 'frontmatter' }, [el('div', { class: 'frontmatter-toggle' }, [el('span', { class: 'dots', text: '⋯' }), el('span', { text: 'frontmatter' })]), fmWrap]),
-      el('div', { class: 'md-editor' }, [bodyTa, el('div', { class: 'md-preview', html: u.mdToHtml(parsed.body) })])
-    ]);
-    bodyTa.addEventListener('input', u.debounce(() => {
-      body.querySelector('.md-preview').innerHTML = u.mdToHtml(bodyTa.value);
-    }, 300));
-
-    u.modal({
-      title: 'تحرير ' + path, body, wide: true,
-      buttons: [
-        { label: 'إلغاء', kind: 'ghost' },
-        {
-          label: 'حفظ', kind: 'primary', close: false, onClick: async () => {
-            await NS.fs.writeSafe(path, NS.jsonc.composeFile(data, bodyTa.value));
-            u.closeModal(); u.toast('حُفظ ' + path, 'ok'); NS.main.render();
-          }
-        }
-      ]
+  function renderAgentFiles(box) {
+    const FV = NS.fileviews;
+    FV.renderMarkdownList(box, {
+      kind: 'agents',
+      label: 'ملف وكيل جديد',
+      idFrom: (rel) => rel.replace(/\.md$/i, ''),
+      onOpen: (f) => FV.editMarkdown(f, 'agent'),
+      onCreate: (full, dir) => FV.createFile(full, dir, 'agent')
     });
   }
 
@@ -781,5 +743,5 @@
     general: viewGeneral, agents: viewAgents,
     permissions: viewPermissions, policies: viewPolicies
   });
-  NS.helpers = { describeSubagents, lastMatch, wildcardMatch, editMdFile, renderAgentFiles };
+  NS.helpers = { describeSubagents, lastMatch, wildcardMatch, renderAgentFiles };
 })(window.OCM);

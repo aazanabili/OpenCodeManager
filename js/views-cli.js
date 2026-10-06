@@ -31,7 +31,7 @@
       F.field({ label: 'cursor.blinking', type: 'bool', value: u.get(S.data, 'cursor.blinking', true), desc: 'لا تأثير له إذا كان style هو default', onChange: v => set('cursor.blinking', v === false ? undefined : true) })
     ], 'c2'));
     c.body.appendChild(el('div', { class: 'flex', style: { marginTop: '10px' } }, [
-      F.btn('قائمة الثيمات المدمجة', { onClick: () => { ST.setTarget('cli'); NS.main.go('themes'); } })
+      F.btn('قائمة الثيمات المدمجة', { onClick: () => { ST.switchDoc(ST.S.scope, 'cli'); NS.main.go('cli-appearance'); } })
     ]));
     root.appendChild(c.root);
   }
@@ -259,7 +259,7 @@
         ]));
       });
       wrap.appendChild(el('div', { class: 'flex', style: { marginTop: '12px' } }, [
-        F.btn('تجاوز جديد', { kind: 'primary', icon: '+', onClick: () => { ST.setTarget('cli'); NS.main.go('keybindPicker'); } })
+        F.btn('تجاوز جديد', { kind: 'primary', icon: '+', onClick: () => { ST.switchDoc(ST.S.scope, 'cli'); NS.main.go('keybindPicker'); } })
       ]));
     };
     render();
@@ -308,7 +308,7 @@
     c2.body.appendChild(F.kvEditor({
       value: u.isObj(S.data.experimental) ? S.data.experimental : {},
       keyPlaceholder: 'feature-id', valPlaceholder: 'true', addLabel: 'إضافة معرّف',
-      hint: 'القيم المنطقية تُحفظ كنص؛ استخدم true/false بلا علامات اقتباس في محرر JSON الخام إن لزم.',
+      hint: 'اكتب true أو false للقيم المنطقية، أو أي نص للمعرّفات الأخرى.',
       onChange: v => ST.edit(x => {
         if (!Object.keys(v).length) delete x.experimental;
         else x.experimental = v;

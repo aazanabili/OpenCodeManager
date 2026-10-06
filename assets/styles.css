@@ -133,7 +133,7 @@ kbd {
   display: flex; flex-direction: column; min-height: 0;
 }
 .nav-search {
-  margin: 12px; padding: 8px 12px; background: var(--panel);
+  margin: 10px 12px 4px; padding: 8px 12px; background: var(--panel);
   border: 1px solid var(--border); border-radius: var(--r-s);
   color: var(--text); font-family: inherit; font-size: 12.5px; outline: none;
 }
@@ -168,6 +168,85 @@ kbd {
 
 .main { flex: 1; overflow-y: auto; min-width: 0; }
 .view { padding: 22px 26px 90px; max-width: 1180px; }
+
+/* ---------------- Global vs project comparison ---------------- */
+.cmp-row {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 9px 0; border-bottom: 1px solid var(--border);
+}
+.cmp-row:last-of-type { border-bottom: 0; }
+.cmp-title { font-size: 12px; font-weight: 700; min-width: 190px; color: var(--text-dim); }
+.cmp-global-row { display: flex; gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.cmp-global-row:last-child { border-bottom: 0; }
+.cmp-global-row .pill { flex: 0 0 auto; }
+
+/* ---------------- Typed key/value editor ---------------- */
+.typedkv { display: flex; flex-direction: column; gap: 7px; }
+.typedkv-row {
+  display: grid; grid-template-columns: minmax(120px, 1fr) 92px minmax(140px, 1.4fr) auto;
+  gap: 7px; align-items: center;
+}
+.typedkv input[type=text], .typedkv select {
+  background: var(--bg-2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 5px; padding: 5px 9px; font-family: var(--mono); font-size: 12px;
+  width: 100%; outline: none; min-height: 28px;
+}
+.typedkv input:focus, .typedkv select:focus { border-color: var(--accent-2); }
+.kv-val { display: flex; align-items: center; }
+.kv-val .switch { transform: scale(.9); }
+
+/* ---------------- Chips editor ---------------- */
+.chips-editor { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.chips-editor .empty { flex: 1 1 100%; }
+.chips-editor .chip-input { text-transform: none; }
+.chips-add { display: flex; gap: 6px; align-items: center; }
+.chips-add input {
+  background: var(--bg-2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 5px; padding: 5px 9px; font-size: 12px; outline: none;
+}
+.chips-add input:focus { border-color: var(--accent-2); }
+
+/* ---------------- Scope list (global + projects) ---------------- */
+.scope-list {
+  border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 4px;
+  max-height: 46vh; overflow-y: auto; flex: 0 0 auto;
+}
+.scope-item { align-items: center; padding: 7px 11px; }
+.scope-item .scope-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scope-item .scope-sub {
+  font-size: 10px; color: var(--text-mute); font-family: var(--mono);
+  background: var(--panel-2); border-radius: 10px; padding: 1px 7px; flex: 0 0 auto;
+  max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.scope-item.active .scope-sub { background: rgba(56,189,248,.18); color: var(--accent); }
+.side-empty { font-size: 11.5px; color: var(--text-mute); padding: 4px 12px 10px; }
+.side-actions { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 10px 2px; }
+.side-actions .btn { flex: 1 1 auto; justify-content: center; }
+
+/* ---------------- Scope banner ---------------- */
+.scope-banner {
+  display: flex; align-items: center; gap: 12px;
+  border-radius: var(--r); padding: 11px 15px; margin-bottom: 18px;
+  border: 1px solid var(--border); background: var(--panel);
+}
+.scope-banner.is-global { background: linear-gradient(90deg, rgba(167,139,250,.13), var(--panel) 60%); border-color: rgba(167,139,250,.32); }
+.scope-banner.is-project { background: linear-gradient(270deg, rgba(56,189,248,.13), var(--panel) 60%); border-color: rgba(56,189,248,.32); }
+.scope-banner .sb-icon { font-size: 20px; flex: 0 0 auto; }
+.scope-banner .sb-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.45; }
+.scope-banner .sb-text strong { font-size: 13.5px; }
+.scope-banner .sb-text span { font-size: 11.5px; color: var(--text-dim); }
+.scope-banner .sb-file { flex: 0 0 auto; }
+
+/* ---------------- Welcome connect cards ---------------- */
+.connect-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 22px; }
+.connect-card {
+  background: var(--panel-2); border: 1px solid var(--border-2);
+  border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; gap: 8px;
+}
+.connect-card .cc-icon { font-size: 24px; }
+.connect-card h3 { margin: 0; font-size: 14.5px; }
+.connect-card p { margin: 0 0 4px; font-size: 12px; color: var(--text-dim); flex: 1; line-height: 1.6; }
+.connect-card code { background: var(--panel-3); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: var(--accent); }
 
 /* ---------------- Welcome ---------------- */
 .welcome { display: grid; place-items: center; min-height: 100%; padding: 40px 20px; }

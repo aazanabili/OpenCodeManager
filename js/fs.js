@@ -1,31 +1,43 @@
 /* ============================================================
-   fs.js — File System Access API layer (local, no server)
-   Falls back to import/export when the API is unavailable.
+   fs.js — multi-root filesystem access (local, no server)
+
+   Two kinds of root are kept:
+     · global  — the OpenCode config dir (~/.config/opencode)
+     · projects — one or more folders that contain your projects
+
+   Handles are persisted in IndexedDB so the next visit only needs
+   the permission re-grant (a single click) before reading resumes.
    ============================================================ */
 (function (NS) {
   'use strict';
 
   const u = NS.u;
-  const { el, $ } = u;
-
-  const API = {
-    handle: null,
-    name: '',
-    mode: 'memory',          // 'fs' | 'memory'
-    permission: 'unknown',   // granted | prompt | denied | unknown
-    lastError: null
-  };
 
   const IDB_NAME = 'opencode-manager';
   const IDB_STORE = 'handles';
-  const IDB_KEY = 'root-dir';
+  const IDB_KEY = 'roots-v2';
 
-  /* ---------------- IndexedDB (tiny promise wrapper) ---------------- */
+  /** Folders never worth descending into while scanning for projects. */
+  const SKIP_DIRS = new Set([
+    'node_modules', '.git', '.hg', '.svn', 'dist', 'build', 'out', 'target',
+    'vendor', 'coverage', '.next', '.nuxt', '.cache', '.venv', 'venv',
+    '__pycache__', '.gradle', '.idea', '.vscode', 'tmp', 'temp', '.turbo'
+  ]);
+
+  const MAX_DEPTH = 4;
+  const MAX_PROJECTS = 300;
+
+  const API = {
+    roots: [],            // { id, name, kind: 'global'|'projects', handle, permission }
+    projects: [],         // { id, name, rootId, relPath, configFile, dotOpencode, agentsDir, ... }
+    scannedAt: 0
+  };
+
+  /* ---------------- IndexedDB ---------------- */
   function idb(mode, fn) {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       let req;
-      try { req = indexedDB.open(IDB_NAME, 1); }
-      catch (e) { return resolve(null); }
+      try { req = indexedDB.open(IDB_NAME, 1); } catch (e) { return resolve(null); }
       req.onupgradeneeded = () => { try { req.result.createObjectStore(IDB_STORE); } catch (_) { } };
       req.onerror = () => resolve(null);
       req.onsuccess = () => {
@@ -39,133 +51,82 @@
       };
     });
   }
-  function idbSet(k, v) { return idb('readwrite', s => s.put(v, k)); }
-  function idbGet(k) { return idb('readonly', s => s.get(k)); }
-  function idbDel(k) { return idb('readwrite', s => s.delete(k)); }
+  const idbSet = (k, v) => idb('readwrite', s => s.put(v, k));
+  const idbGet = (k) => idb('readonly', s => s.get(k));
+  const idbDel = (k) => idb('readwrite', s => s.delete(k));
 
   /* ---------------- capability ---------------- */
-  const supported = () =>
-    typeof window.showDirectoryPicker === 'function' && window.isSecureContext;
+  const supported = () => typeof window.showDirectoryPicker === 'function' && window.isSecureContext;
 
-  /* ---------------- path helpers ---------------- */
-  function segments(path) {
-    return String(path || '').split('/').map(s => s.trim()).filter(Boolean);
-  }
+  /* ---------------- low level path helpers ---------------- */
+  const segments = (p) => String(p || '').split('/').map(s => s.trim()).filter(Boolean);
 
-  async function dirFor(path, create) {
-    if (!API.handle) throw new Error('لا يوجد مجلد متصل');
-    let dir = API.handle;
+  async function dirFrom(handle, path, create) {
+    let dir = handle;
     const segs = segments(path);
-    // last segment may be the file name
-    for (let i = 0; i < segs.length - 1; i++) {
-      dir = await dir.getDirectoryHandle(segs[i], { create: !!create });
-    }
+    for (let i = 0; i < segs.length; i++) dir = await dir.getDirectoryHandle(segs[i], { create: !!create });
     return dir;
   }
 
-  function parentOf(path) {
+  async function resolve(rootId, path, create) {
+    const root = API.roots.find(r => r.id === rootId);
+    if (!root) throw new Error('الجذر غير موجود');
     const segs = segments(path);
-    return segs.length > 1 ? segs.slice(0, -1).join('/') : '';
-  }
-  function baseOf(path) {
-    const segs = segments(path);
-    return segs.length ? segs[segs.length - 1] : '';
+    const name = segs.pop();
+    const dir = await dirFrom(root.handle, segs.join('/'), !!create);
+    return { root, dir, name };
   }
 
-  /* ---------------- permission ---------------- */
-  async function ensurePermission(desc) {
-    if (!API.handle) return false;
-    const opts = { mode: 'readwrite' };
-    let p = await API.handle.queryPermission(opts);
-    if (p === 'granted') { API.permission = 'granted'; return true; }
-    p = await API.handle.requestPermission(opts);
-    API.permission = p;
-    return p === 'granted';
-  }
-
-  /* ---------------- read / write ---------------- */
-  async function exists(path) {
+  async function readFile(rootId, path) {
     try {
-      const segs = segments(path);
-      if (!segs.length) return false;
-      const dir = await dirFor(path, false);
-      await dir.getFileHandle(segs[segs.length - 1], { create: false });
-      return true;
-    } catch (_) { return false; }
-  }
-
-  async function read(path) {
-    if (!API.handle) return null;
-    try {
-      const segs = segments(path);
-      const dir = await dirFor(path, false);
-      const fh = await dir.getFileHandle(segs[segs.length - 1], { create: false });
-      const file = await fh.getFile();
-      return await file.text();
+      const { dir, name } = await resolve(rootId, path, false);
+      const fh = await dir.getFileHandle(name, { create: false });
+      return await (await fh.getFile()).text();
     } catch (_) { return null; }
   }
 
-  async function readJSON(path) {
-    const txt = await read(path);
-    if (txt == null) return null;
-    return NS.jsonc.parse(txt);
-  }
-
-  async function write(path, text) {
-    if (!API.handle) throw new Error('لا يوجد مجلد متصل');
-    const ok = await ensurePermission();
-    if (!ok) throw new Error('لم يُمنح إذن الكتابة للمجلد');
-    const segs = segments(path);
-    const dir = await dirFor(path, true);
-    const fh = await dir.getFileHandle(segs[segs.length - 1], { create: true });
+  async function writeFile(rootId, path, text) {
+    const { dir, name } = await resolve(rootId, path, true);
+    const fh = await dir.getFileHandle(name, { create: true });
     const w = await fh.createWritable();
     await w.write(text);
     await w.close();
     return true;
   }
 
-  /** Save with a rotating `.backup` copy of the previous content. */
-  async function writeSafe(path, text) {
-    const prev = await read(path);
-    if (prev != null && prev !== text) {
-      await write(path + '.backup', prev).catch(() => { });
-    }
-    return write(path, text);
+  /** Write, keeping one rotating `.backup` of the previous content. */
+  async function writeSafe(rootId, path, text) {
+    const prev = await readFile(rootId, path);
+    if (prev != null && prev !== text) await writeFile(rootId, path + '.backup', prev).catch(() => { });
+    return writeFile(rootId, path, text);
   }
 
-  async function remove(path) {
-    if (!API.handle) return false;
-    const ok = await ensurePermission();
-    if (!ok) throw new Error('لم يُمنح إذن الحذف');
-    const segs = segments(path);
-    if (!segs.length) return false;
-    const dir = await dirFor(path, false);
-    await dir.removeEntry(segs[segs.length - 1], { recursive: true });
-    return true;
-  }
-
-  /** List one directory level. Returns [{ name, kind }] sorted. */
-  async function list(path) {
-    if (!API.handle) return [];
+  async function removePath(rootId, path) {
     try {
-      const dir = path ? await dirFor(path + '/x', false) : API.handle;
+      const { dir, name } = await resolve(rootId, path, false);
+      await dir.removeEntry(name, { recursive: true });
+      return true;
+    } catch (_) { return false; }
+  }
+
+  async function listDir(rootId, path) {
+    try {
+      const { dir } = await resolve(rootId, path ? path + '/x' : '', false);
       const out = [];
-      for await (const [name, handle] of dir.entries()) {
-        out.push({ name, kind: handle.kind });
-      }
+      for await (const [name, handle] of dir.entries()) out.push({ name, kind: handle.kind });
       return out.sort((a, b) => a.name.localeCompare(b.name));
     } catch (_) { return []; }
   }
 
-  /** Recursively collect files under `path`, relative paths returned. */
-  async function walk(path, maxDepth) {
+  /** All files under `path`, as relative paths. */
+  async function walkFiles(rootId, path, maxDepth) {
     const out = [];
-    const base = segments(path).length;
+    const baseDepth = segments(path).length;
     async function rec(rel, depth) {
       if (maxDepth && depth > maxDepth) return;
       let items = [];
       try {
-        const dir = rel ? await dirFor(rel + '/x', false) : API.handle;
+        const { dir } = await resolve(rootId, rel ? rel + '/x' : '', false);
         for await (const [name, handle] of dir.entries()) items.push({ name, kind: handle.kind });
       } catch (_) { return; }
       for (const it of items) {
@@ -178,88 +139,221 @@
     return out.sort();
   }
 
-  /* ---------------- scope detection ---------------- */
-  const CONFIG_CANDIDATES = [
-    'opencode.jsonc', 'opencode.json',
-    '.opencode/opencode.jsonc', '.opencode/opencode.json'
-  ];
-  const CLI_CANDIDATES = ['cli.json'];
-
-  async function detect() {
-    const files = await walk('', 3);
-    const set = new Set(files);
-    const has = (p) => set.has(p);
-
-    const cfgPath = CONFIG_CANDIDATES.find(has) || null;
-    const cliPath = CLI_CANDIDATES.find(has) || null;
-
-    const agentsDir = has('.opencode/agents') ? '.opencode/agents' : (has('agents') ? 'agents' : null);
-    const skillsDir = has('.opencode/skills') ? '.opencode/skills' : (has('skills') ? 'skills' : null);
-    const commandsDir = has('.opencode/commands') ? '.opencode/commands' : (has('commands') ? 'commands' : null);
-    const themesDir = has('.opencode/themes') ? '.opencode/themes' : (has('themes') ? 'themes' : null);
-    const pluginsDir = has('.opencode/plugins') ? '.opencode/plugins' : (has('plugins') ? 'plugins' : null);
-
-    return {
-      files, cfgPath, cliPath,
-      agentsDir, skillsDir, commandsDir, themesDir, pluginsDir,
-      agentsFile: (agentsDir ? agentsDir + '/x' : 'x'),
-      isOpencodeConfigDir: !!cliPath && !!cfgPath,
-      instructionsFile: has('.opencode/AGENTS.md') ? '.opencode/AGENTS.md'
-        : (has('AGENTS.md') ? 'AGENTS.md' : null)
-    };
+  /* ---------------- permissions ---------------- */
+  async function ensurePermission(rootId, mode) {
+    const root = API.roots.find(r => r.id === rootId);
+    if (!root) return false;
+    const opts = { mode: mode || 'readwrite' };
+    let p = await root.handle.queryPermission(opts);
+    if (p !== 'granted') p = await root.handle.requestPermission(opts);
+    root.permission = p;
+    return p === 'granted';
   }
 
-  /* ---------------- connect ---------------- */
-  async function connect() {
+  async function reauthorizeAll() {
+    let all = true;
+    for (const r of API.roots) {
+      const ok = await ensurePermission(r.id);
+      if (!ok) all = false;
+    }
+    return all;
+  }
+
+  /* ---------------- roots management ---------------- */
+  const uid = () => 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+  async function addRoot(kind) {
     if (!supported()) {
-      u.toast('متصفحك لا يدعم الكتابة المباشرة على القرص. استخدم الاستيراد/التصدير.', 'warn', 6000);
+      u.toast('المتصفح لا يدعم الوصول للقرص. استخدم Chrome أو Edge.', 'warn', 6000);
       return null;
     }
     let handle;
     try {
-      handle = await window.showDirectoryPicker({ id: 'opencode-config', mode: 'readwrite' });
+      handle = await window.showDirectoryPicker({
+        id: kind === 'global' ? 'opencode-global' : 'opencode-projects',
+        mode: 'readwrite'
+      });
     } catch (e) {
       if (e && e.name === 'AbortError') return null;
       throw e;
     }
-    API.handle = handle;
-    API.name = handle.name;
-    API.mode = 'fs';
-    await idbSet(IDB_KEY, handle);
-    const ok = await ensurePermission();
-    if (!ok) { API.mode = 'memory'; u.toast('لم يُمنح إذن الكتابة — وضع للقراءة فقط', 'warn'); }
-    return handle;
+    const root = { id: uid(), name: handle.name, kind, handle, permission: 'prompt' };
+    API.roots.push(root);
+    await ensurePermission(root.id);
+    await persist();
+    return root;
+  }
+
+  async function removeRoot(rootId) {
+    API.roots = API.roots.filter(r => r.id !== rootId);
+    API.projects = API.projects.filter(p => p.rootId !== rootId);
+    await persist();
+  }
+
+  function globalRoot() { return API.roots.find(r => r.kind === 'global') || null; }
+  function projectRoots() { return API.roots.filter(r => r.kind === 'projects'); }
+
+  async function persist() {
+    await idbSet(IDB_KEY, API.roots.map(r => ({ id: r.id, name: r.name, kind: r.kind, handle: r.handle })));
   }
 
   async function restore() {
-    if (!supported()) return false;
-    const handle = await idbGet(IDB_KEY);
-    if (!handle) return false;
+    const saved = await idbGet(IDB_KEY);
+    if (!saved || !Array.isArray(saved)) return false;
+    API.roots = [];
+    for (const r of saved) {
+      if (!r || !r.handle) continue;
+      let perm = 'prompt';
+      try { perm = await r.handle.queryPermission({ mode: 'readwrite' }); }
+      catch (_) { continue; }
+      API.roots.push({ id: r.id, name: r.name, kind: r.kind, handle: r.handle, permission: perm });
+    }
+    return API.roots.length > 0;
+  }
+
+  /** Roots whose permission still needs one user click. */
+  function needsPermission() { return API.roots.filter(r => r.permission !== 'granted'); }
+
+  /* ---------------- project discovery ---------------- */
+  const PROJECT_CONFIG_FILES = ['opencode.jsonc', 'opencode.json', '.opencode/opencode.jsonc', '.opencode/opencode.json'];
+
+  /** Inspect one directory and describe it if it looks like an OpenCode project. */
+  async function inspectDir(rootId, relPath) {
+    let names = [];
     try {
-      const p = await handle.queryPermission({ mode: 'readwrite' });
-      if (p === 'granted') {
-        API.handle = handle; API.name = handle.name; API.mode = 'fs'; API.permission = 'granted';
-        return true;
+      const { dir } = await resolve(rootId, relPath ? relPath + '/x' : '', false);
+      for await (const [name, handle] of dir.entries()) names.push({ name, kind: handle.kind });
+    } catch (_) { return null; }
+
+    const has = (n) => names.some(x => x.name === n);
+    const dotOpencode = names.some(x => x.name === '.opencode' && x.kind === 'directory');
+
+    let configFile = null;
+    let inner = null;
+    if (has('opencode.jsonc')) configFile = 'opencode.jsonc';
+    else if (has('opencode.json')) configFile = 'opencode.json';
+    else if (dotOpencode) {
+      try {
+        inner = [];
+        const { dir } = await resolve(rootId, relPath ? relPath + '/.opencode/x' : '.opencode/x', false);
+        for await (const [name] of dir.entries()) inner.push(name);
+        if (inner.includes('opencode.jsonc')) configFile = '.opencode/opencode.jsonc';
+        else if (inner.includes('opencode.json')) configFile = '.opencode/opencode.json';
+      } catch (_) { /* unreadable .opencode is simply not a config site */ }
+    }
+
+    if (!configFile && !dotOpencode) return null;
+
+    // Content folders live either at the project root or under .opencode/.
+    const pick = (...cands) => {
+      for (const c of cands) {
+        const parts = c.split('/');
+        if (parts[0] === '.opencode') {
+          if (inner && inner.includes(parts[1])) return c;
+        } else if (has(c)) return c;
       }
-      API.handle = handle; API.name = handle.name; API.mode = 'fs'; API.permission = p;
-      return true; // needs a user gesture to re-grant
-    } catch (_) { await idbDel(IDB_KEY); return false; }
+      return null;
+    };
+    const instructions = has('AGENTS.md') ? 'AGENTS.md'
+      : (inner && inner.includes('AGENTS.md') ? '.opencode/AGENTS.md' : null);
+
+    return {
+      relPath,
+      name: relPath ? relPath.split('/').pop() : (API.roots.find(r => r.id === rootId) || {}).name,
+      configFile,
+      dotOpencode,
+      agentsDir: pick('.opencode/agents', 'agents'),
+      skillsDir: pick('.opencode/skills', 'skills'),
+      commandsDir: pick('.opencode/commands', 'commands'),
+      themesDir: pick('.opencode/themes', 'themes'),
+      pluginsDir: pick('.opencode/plugins', 'plugins'),
+      instructionsFile: instructions
+    };
   }
 
-  async function reauthorize() {
-    if (!API.handle) return false;
-    const ok = await ensurePermission();
-    return ok;
+  async function scanProjects() {
+    const found = [];
+    for (const root of projectRoots()) {
+      if (root.permission !== 'granted') continue;
+
+      const walk = async (relPath, depth) => {
+        if (found.length >= MAX_PROJECTS || depth > MAX_DEPTH) return;
+        let entries = [];
+        try {
+          const { dir } = await resolve(root.id, relPath ? relPath + '/x' : '', false);
+          for await (const [name, handle] of dir.entries()) entries.push({ name, kind: handle.kind });
+        } catch (_) { return; }
+
+        for (const e of entries) {
+          // skip build dirs and every dot-directory: `.opencode` is a config
+          // container, not a project in its own right
+          if (e.kind !== 'directory' || SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
+          const child = relPath ? relPath + '/' + e.name : e.name;
+          const info = await inspectDir(root.id, child);
+          if (info) found.push(Object.assign({ id: root.id + '::' + child, rootId: root.id }, info));
+          // descend anyway: monorepos nest packages
+          await walk(child, depth + 1);
+        }
+      };
+
+      // the projects root itself may be a project
+      const self = await inspectDir(root.id, '');
+      if (self) found.push(Object.assign({ id: root.id + '::', rootId: root.id }, self));
+      await walk('', 0);
+    }
+
+    // de-duplicate by id, sort by name
+    const seen = new Set();
+    API.projects = found
+      .filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; })
+      .sort((a, b) => a.name.localeCompare(b.name));
+    API.scannedAt = Date.now();
+    return API.projects;
   }
 
-  function disconnect() {
-    API.handle = null; API.name = ''; API.mode = 'memory'; API.permission = 'unknown';
-    idbDel(IDB_KEY);
+  function projectById(id) { return API.projects.find(p => p.id === id) || null; }
+
+  /** Where a project's config lives (may be a file or a folder entry). */
+  function projectConfigPath(project) {
+    if (!project || !project.configFile) return null;
+    return project.configFile;
+  }
+
+  /**
+   * Filesystem context for the configuration currently open in the store:
+   * which root to talk to, and the folder prefix inside it.
+   *   global scope  -> the opencode config dir, prefix ''
+   *   project scope -> the project's root, prefix '<relative path>/'
+   */
+  function ctx() {
+    const S = NS.store && NS.store.S;
+    const scope = S && S.scope;
+    if (scope && scope.kind === 'project' && scope.project) {
+      const p = scope.project;
+      return {
+        rootId: p.rootId,
+        prefix: p.relPath ? p.relPath + '/' : '',
+        label: p.name,
+        project: p
+      };
+    }
+    const g = globalRoot();
+    return g ? { rootId: g.id, prefix: '', label: g.name, project: null } : null;
+  }
+
+  /** Join a scope-relative folder with the current context prefix. */
+  function join(prefix, rel) {
+    const head = String(prefix == null ? '' : prefix).replace(/^\/+|\/+$/g, '');
+    const tail = String(rel == null ? '' : rel).replace(/^\/+|\/+$/g, '');
+    if (!tail) return head;
+    if (!head) return tail;
+    return head + '/' + tail;
   }
 
   NS.fs = {
-    API, supported, connect, restore, disconnect, reauthorize,
-    read, readJSON, write, writeSafe, remove, exists, list, walk, detect,
-    parentOf, baseOf
+    API, supported, addRoot, removeRoot, persist, restore, reauthorizeAll, needsPermission,
+    globalRoot, projectRoots, scanProjects, projectById, projectConfigPath, inspectDir,
+    readFile, writeFile, writeSafe, removePath, listDir, walkFiles, ensurePermission,
+    ctx, join, PROJECT_CONFIG_FILES
   };
 })(window.OCM);
