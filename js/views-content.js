@@ -10,40 +10,105 @@
 
   const H = () => NS.helpers;
 
-  /* ===============================================================
-     SKILLS
+/* ===============================================================
+     SKILLS — discovery, control and authoring
      =============================================================== */
   function viewSkills(root) {
     const d = S.data;
+    const SK = NS.skills;
+    const isProject = !ST.isGlobal();
+
     root.appendChild(F.pageHead({
-      icon: '🧩', title: 'المهارات (Skills)', doc: 'skills',
-      count: (d.skills || []).length,
-      desc: 'المهارة تعليمات قابلة لإعادة الاستخدام لمهمة محددة. ينشرها OpenCode للنموذج حسب صلاحيتها، ثم يحمّلها النموذج بأداة <code>skill</code> عند الحاجة.',
-      actions: [F.btn('تحديث', { icon: '⟳', onClick: () => NS.main.render() })]
+      icon: '🧩', title: 'المهارات', doc: 'skills',
+      count: SK.list.length + (SK.remote.length || ''),
+      desc: 'تعليمات قابلة لإعادة الاستخدام لمهمة محددة. يعرضها OpenCode للنموذج حسب صلاحيتها، ثم يحمّلها بأداة <code>skill</code> عند الحاجة. المعرّف يأتي من المسار لا من اسم العرض.',
+      actions: [
+        F.btn('فحص', { icon: '⟳', onClick: async (e) => {
+          e.currentTarget.classList.add('saving');
+          await SK.discover({ remote: true });
+          e.currentTarget.classList.remove('saving');
+          NS.main.render();
+        } }),
+        F.btn('مهارة جديدة', { kind: 'primary', icon: '+', onClick: () => skillWizard() })
+      ]
     }));
 
-    const c0 = F.card({ title: 'مصادر المهارات الإضافية', desc: 'مجلدات محلية أو كتالوجات HTTP. تُدمج كل المصفوفات <code>skills</code> ولا تستبدل بعضها.' });
+    /* ---------- extra sources configured by the user ---------- */
+    const c0 = F.card({
+      title: 'مصادر إضافية',
+      desc: 'مجلدات محلية أو كتالوجات HTTP. تُدمج مع ما يكتشفه OpenCode تلقائياً ولا تستبدله.'
+    });
     c0.body.appendChild(F.listEditor({
-      items: d.skills || [], placeholder: './team-skills  أو  https://example.com/opencode/skills/', addLabel: 'إضافة مصدر',
-      emptyText: 'لا توجد مصادر إضافية — يعمل الاكتشاف التلقائي فقط',
-      hint: 'المسار النسبي يُحل من مجلد عمل OpenCode النشط لا من ملف الإعداد · <code>~/</code> من مجلد المستخدم · المسار المطلق كما هو · <code>http(s)://</code> كتالوج يحتوي <code>index.json</code>.',
-      onChange: v => ST.edit(x => u.setOrDelete(x, 'skills', v))
+      items: d.skills || [], placeholder: './team-skills  أو  https://example.com/opencode/skills/',
+      addLabel: 'إضافة مصدر', emptyText: 'لا توجد مصادر إضافية — الاكتشاف التلقائي كافٍ',
+      hint: 'المسار النسبي يُحل من مجلد العمل النشط · <code>~/</code> من مجلد المستخدم · <code>http(s)://</code> كتالوج يحتوي <code>index.json</code>.',
+      onChange: v => { ST.edit(x => u.setOrDelete(x, 'skills', v)); }
     }));
     root.appendChild(c0.root);
 
+    /* ---------- discovered skills ---------- */
     const c1 = F.card({
-      title: 'ملفات المهارات',
-      desc: 'كل مصدر يدعم <code>&lt;source&gt;/&lt;id&gt;/SKILL.md</code> أو <code>&lt;source&gt;/&lt;id&gt;.md</code>. المعرّف يأتي من المسار وليس من حقل <code>name</code>.'
+      title: 'المهارات المكتشفة',
+      desc: SK.scannedAt ? 'آخر فحص: ' + new Date(SK.scannedAt).toLocaleString('ar') : 'لم يُفحص بعد'
     });
-    const box = el('div', {});
-    c1.body.appendChild(el('div', { class: 'info-box', html: 'الاكتشاف التلقائي: <code>~/.config/opencode/skills</code> · <code>~/.claude/skills</code> · <code>~/.agents/skills</code> · <code>.opencode/skills</code> · <code>.claude/skills</code> · <code>.agents/skills</code>.' }));
-    c1.body.appendChild(box);
-    root.appendChild(c1.root);
-    renderSkillFiles(box);
 
-    const c2 = F.card({ title: 'مرجع', desc: 'كيف تُكتب المهارة' });
-    c2.body.appendChild(F.hint('<code>name</code>: اسم العرض · <code>description</code>: ما يُعرض للنموذج · <code>metadata.opencode/autoinvoke: false</code>: إخفاء المهارة من قائمة النموذج (تبقى محمّلة بالـ ID) · <code>disable-model-invocation: true</code>: نفس التأثير.'));
-    c2.body.appendChild(el('pre', { class: 'snippet', html: u.esc(`---
+    if (SK.error) c1.body.appendChild(el('div', { class: 'warn-box', html: 'تعذّر الوصول إلى: ' + u.esc(SK.error) }));
+
+    if (!SK.list.length && !SK.remote.length) {
+      c1.body.appendChild(el('div', { class: 'empty' },
+        'لم يُعثر على مهارات. يبحث OpenCode تلقائياً في: .opencode/skills و .claude/skills و .agents/skills — تأكد أن المجلد مربوط或在ه.'));
+    }
+
+    if (SK.list.length) {
+      const grid = el('div', { class: 'sk-grid' });
+      SK.list.forEach(s => grid.appendChild(skillCard(s)));
+      c1.body.appendChild(grid);
+    }
+
+    if (SK.remote.length) {
+      c1.body.appendChild(el('div', { class: 'divider' }));
+      c1.body.appendChild(el('h4', { class: 'small', text: 'من كتالوجات HTTP (' + SK.remote.length + ')' }));
+      const grid2 = el('div', { class: 'sk-grid', style: { marginTop: '10px' } });
+      SK.remote.forEach(s => grid2.appendChild(skillCard(s, true)));
+      c1.body.appendChild(grid2);
+    }
+    root.appendChild(c1.root);
+
+    /* ---------- permission gate for skills ---------- */
+    const c2 = F.card({
+      title: 'صلاحيات المهارات',
+      desc: 'تحكّم في أي مهارة يستطيع الوكيل عرضها وتحميلها.'
+    });
+    const hasRules = (d.permissions || []).some(r => r.action === 'skill');
+    if (!hasRules) {
+      c2.body.appendChild(el('div', { class: 'info-box', html: 'لا توجد قواعد <code>skill</code> — يُسمح بكل المهارات التي لها <code>description</code>.' }));
+    }
+    c2.body.appendChild(F.btn('فتح قسم الصلاحيات', { onClick: () => NS.main.go('permissions') }));
+    if (SK.list.length) {
+      c2.body.appendChild(el('div', { class: 'flex wrap', style: { marginTop: '10px' } },
+        [F.btn('اسمح بكل المهارات', {
+          size: 'sm', onClick: () => {
+            ST.edit(x => u.set(x, 'permissions', (x.permissions || []).concat([{ action: 'skill', resource: '*', effect: 'allow' }])));
+            NS.main.go('permissions');
+          }
+        }), F.btn('امنع كل المهارات', {
+          size: 'sm', kind: 'danger', onClick: () => {
+            ST.edit(x => u.set(x, 'permissions', (x.permissions || []).concat([{ action: 'skill', resource: '*', effect: 'deny' }])));
+            NS.main.go('permissions');
+          }
+        })]));
+    }
+    root.appendChild(c2.root);
+
+    /* ---------- how it works ---------- */
+    const c3 = F.card({ title: 'كيف تعمل المهارات' });
+    c3.body.appendChild(F.hint(
+      'المعرّف من المسار: <code>&lt;source&gt;/git-release/SKILL.md</code> ⇒ <code>git-release</code>، و <code>&lt;source&gt;/review.md</code> ⇒ <code>review</code>. ' +
+      'الاسم في frontmatter مجرد تسمية عرض.'));
+    c3.body.appendChild(F.hint(
+      'بدون <code>description</code> لا تُعرض المهارة للنموذج إطلاقاً. ' +
+      'و <code>opencode/autoinvoke: false</code> يخفيها من القائمة مع بقائها قابلة للتحميل بالـ ID — و <code>disable-model-invocation: true</code> له نفس الأثر، و <code>opencode/autoinvoke</code> هو الأسبق عند وجودهما معاً.'));
+    c3.body.appendChild(el('pre', { class: 'snippet', style: { marginTop: '12px' }, html: u.esc(`---
 name: Git Release
 description: Prepare release notes, version bumps, and GitHub releases
 metadata:
@@ -54,24 +119,145 @@ metadata:
 
 1. Read \`references/release-policy.md\`.
 2. Summarize merged changes since the previous tag.
-3. Run \`scripts/changelog.ts\` only after approval.`) }));
-    c2.body.appendChild(F.hint('الملفات الداعمة لا تُحمّل تلقائياً — ضعها بجانب ملف SKILL.md لتصبح مساراتها مرئية للوكيل.'));
-    root.appendChild(c2.root);
+3. Propose the version bump before changing files.`) }));
+    root.appendChild(c3.root);
   }
 
-  function renderSkillFiles(box) {
-    const FV = NS.fileviews;
-    FV.renderMarkdownList(box, {
-      kind: 'skills',
-      label: 'مهارة جديدة',
-      idFrom: (rel) => {
-        if (/\/SKILL\.md$/i.test(rel)) return rel.replace(/\/SKILL\.md$/i, '');
-        return rel.replace(/\.md$/i, '').split('/').pop();
-      },
-      onOpen: (f) => FV.editMarkdown(f, 'skill'),
-      onCreate: (full, dir) => FV.createFile(full, dir, 'skill')
+  function skillCard(s, isRemote) {
+    const card = el('div', { class: 'sk-card' + (isRemote ? ' remote' : '') }, [
+      el('div', { class: 'sk-name' }, [
+        el('span', { class: 'sk-id', text: s.id }),
+        s.autoinvoke ? el('span', { class: 'pill amber', text: 'مخفية' }) : null
+      ].filter(Boolean)),
+      el('div', { class: 'small', style: { color: 'var(--text-2)', fontWeight: '600' }, text: s.name }),
+      el('div', { class: 'sk-desc', text: s.description || 'بلا وصف — لن يعرضها OpenCode للنموذج.' }),
+      el('div', { class: 'sk-src', text: (isRemote ? '🌐 ' : (s.scope === 'project' ? '📁 ' : '🌐 ')) + (s.dir || s.source) }),
+      el('div', { class: 'flex wrap' }, [
+        s.hasScripts ? el('span', { class: 'pill', text: 'يحوي سكربتات' }) : null,
+        s.version ? el('span', { class: 'pill mono', text: 'v' + s.version }) : null,
+        isRemote
+          ? el('button', { class: 'btn ghost sm', onclick: () => showSkill(s) }, 'عرض')
+          : el('button', { class: 'btn ghost sm', onclick: () => NS.fileviews.editMarkdown(s.file, 'skill') }, 'تحرير'),
+        !isRemote ? el('button', {
+          class: 'btn ghost sm', title: 'إخفاء من قائمة النموذج',
+          onclick: async () => {
+            const FS = NS.fs, ctx = FS.ctx();
+            const text = (await FS.readFile(ctx.rootId, s.file)) || '';
+            const fm = NS.jsonc.parseFrontmatter(text);
+            const data = u.clone(fm.data);
+            const off = s.autoinvoke;                 // currently hidden -> make visible
+            if (u.isObj(data.metadata)) {
+              delete data.metadata['opencode/autoinvoke'];
+              if (!Object.keys(data.metadata).length) delete data.metadata;
+            }
+            delete data.autoinvoke;
+            if (!off) {
+              if (!u.isObj(data.metadata)) data.metadata = {};
+              data.metadata['opencode/autoinvoke'] = 'false';
+            }
+            await FS.writeSafe(ctx.rootId, s.file, NS.jsonc.composeFile(data, fm.body));
+            await NS.skills.discover({ remote: false });
+            u.toast('ok', off ? 'أُعيد عرض المهارة للنموذج' : 'أُخفيت المهارة من قائمة النموذج');
+            NS.main.render();
+          }
+        }, s.autoinvoke ? 'إظهار للنموذج' : 'إخفاء') : null
+      ].filter(Boolean))
+    ]);
+    return card;
+  }
+
+  function showSkill(s) {
+    u.modal({
+      title: s.name + '  ·  ' + s.id, wide: true,
+      body: el('div', {}, [
+        el('div', { class: 'small dim', style: { marginBottom: '12px' }, text: s.file }),
+        el('div', { class: 'md-preview', style: { maxHeight: '52vh' }, html: u.mdToHtml(s.body) })
+      ]),
+      buttons: [{ label: 'إغلاق', kind: 'ghost' }]
     });
   }
+
+  /* ---------------- authoring wizard ---------------- */
+  function skillWizard() {
+    const target = NS.skills.targetDir();
+    if (!target) { u.toast('warn', 'اربط مجلداً أولاً لتحديد مكان إنشاء المهارة.'); return; }
+
+    const idIn = u.el('input', { type: 'text', class: 'mono', dir: 'ltr', placeholder: 'my-skill' });
+    const nameIn = u.el('input', { type: 'text', placeholder: 'اسم العرض' });
+    const descIn = u.el('input', { type: 'text', placeholder: 'متى يستخدم النموذج هذه المهارة؟' });
+    const autoIn = u.el('input', { type: 'checkbox' });
+    const bodyTa = u.el('textarea', { rows: 12, dir: 'ltr' });
+    bodyTa.value = NS.skills.suggestBody('generic');
+    const preview = el('div', { class: 'md-preview', html: u.mdToHtml(bodyTa.value) });
+    bodyTa.addEventListener('input', u.debounce(() => { preview.innerHTML = u.mdToHtml(bodyTa.value); }, 300));
+
+    const err = u.el('div', { class: 'field-error hidden' });
+    idIn.addEventListener('input', () => {
+      const v = idIn.value.trim();
+      if (!v) return err.classList.add('hidden');
+      if (!NS.skills.slugOk(v)) {
+        u.clear(err); err.appendChild(document.createTextNode('استخدم أحرفاً صغيرة وأرقاماً وشرطات فقط، مثل git-release'));
+        err.classList.remove('hidden');
+      } else if (NS.skills.byId(v)) {
+        u.clear(err); err.appendChild(document.createTextNode('يوجد مهارة بنفس المعرّف'));
+        err.classList.remove('hidden');
+      } else err.classList.add('hidden');
+    });
+
+    const templates = u.el('div', { class: 'flex wrap' });
+    Object.entries(NS.skills.TEMPLATES).forEach(([k, t]) => {
+      templates.appendChild(u.el('button', {
+        class: 'btn ghost sm', onclick: () => { bodyTa.value = t.body; preview.innerHTML = u.mdToHtml(t.body); }
+      }, t.label));
+    });
+
+    u.modal({
+      title: 'مهارة جديدة', wide: true,
+      body: u.el('div', { class: 'grid' }, [
+        u.el('div', { class: 'info-box', html: 'ستُنشأ في <code>' + u.esc(target.full + '/&lt;id&gt;/SKILL.md') + '</code> داخل نطاق <b>' + u.esc(target.label) + '</b>.' }),
+        u.el('div', { class: 'grid c2' }, [
+          u.el('div', { class: 'field' }, [u.el('label', { text: 'المعرّف (مجلد صغير بأحرف إنجليزية وأرقام وشرطات)' }), idIn, err]),
+          u.el('div', { class: 'field' }, [u.el('label', { text: 'اسم العرض' }), nameIn])
+        ]),
+        u.el('div', { class: 'field' }, [u.el('label', { text: 'الوصف — يظهر للنموذج ليقرر متى يستخدم المهارة' }), descIn]),
+        u.el('div', { class: 'field inline' }, [
+          u.el('label', { text: 'إخفاؤها من قائمة النموذج (تبقى قابلة للتحميل بالـ ID)' }),
+          u.el('label', { class: 'switch' }, [autoIn, u.el('span', { class: 'slider' })])
+        ]),
+        u.el('div', { class: 'field' }, [
+          u.el('label', { text: 'المحتوى' }), templates,
+          u.el('div', { class: 'md-editor', style: { marginTop: '8px' } }, [bodyTa, preview])
+        ])
+      ]),
+      buttons: [
+        { label: 'إلغاء', kind: 'ghost' },
+        {
+          label: 'إنشاء المهارة', kind: 'primary', close: false, onClick: async () => {
+            const id = idIn.value.trim();
+            if (!id) { u.toast('err', 'أدخل معرّفاً'); return false; }
+            if (!NS.skills.slugOk(id)) { u.toast('err', 'المعرّف يجب أن يكون بأحرف صغيرة وأرقام وشرطات'); return false; }
+            if (NS.skills.byId(id)) { u.toast('err', 'يوجد مهارة بنفس المعرّف'); return false; }
+
+            const data = { name: nameIn.value.trim() || id, description: descIn.value.trim() };
+            if (autoIn.checked) data.autoinvoke = 'false';
+            if (!data.description) data.description = id;
+
+            const ctx = NS.fs.ctx();
+            const okPerm = await NS.fs.ensurePermission(ctx.rootId);
+            if (!okPerm) { u.toast('err', 'لم يُمنح إذن الكتابة'); return false; }
+
+            const path = target.full + '/' + id + '/SKILL.md';
+            await NS.fs.writeFile(ctx.rootId, path, NS.jsonc.composeFile(data, bodyTa.value));
+            u.closeModal();
+            await NS.skills.discover({ remote: false });
+            u.toast('ok', 'أُنشئت المهارة ' + id + ' في ' + target.label);
+            NS.main.render();
+          }
+        }
+      ]
+    });
+  }
+
 
   /* ===============================================================
      COMMANDS

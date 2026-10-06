@@ -188,13 +188,13 @@
       F.field({ label: '$schema', value: d.$schema, placeholder: 'https://opencode.ai/config.json', onChange: v => ST.edit(x => u.setOrDelete(x, '$schema', v)), badge: 'General' }),
       F.field({ label: 'الصدفة (shell)', value: d.shell, placeholder: '/bin/zsh', desc: 'الصدفة المستخدمة في الطرفية وأداة bash', onChange: v => ST.edit(x => u.setOrDelete(x, 'shell', v)) }),
       F.field({
-        label: 'النموذج الافتراضي', type: 'model', value: typeof d.model === 'string' ? d.model : '',
+        label: 'النموذج الافتراضي', type: 'modelpicker', value: typeof d.model === 'string' ? d.model : '',
         desc: 'الصيغة: <code>provider/model</code>. ملاحظة: النموذج على المستوى الأعلى لا يحتفظ بـ <code>#variant</code>.',
         hint: d.model && typeof d.model === 'object' ? 'مُخزَّن حالياً بالصيغة الموسّعة: ' + JSON.stringify(d.model) : null,
         onChange: v => ST.edit(x => u.setOrDelete(x, 'model', v))
       }),
       F.field({
-        label: 'الوكيل الافتراضي', type: 'agent', value: d.default_agent,
+        label: 'الوكيل الافتراضي', type: 'agentpicker', value: d.default_agent,
         desc: 'يُستخدم عندما لا تحدد الجلسة وكيلاً. يجب أن يكون موجوداً ومرئياً ويدعم الوضع primary.',
         onChange: v => ST.edit(x => u.setOrDelete(x, 'default_agent', v))
       }),
@@ -484,7 +484,7 @@
         const modelVal = typeof a.model === 'string' ? a.model : (u.isObj(a.model) ? [a.model.providerID, a.model.model].filter(Boolean).join('/') + (a.model.variant ? '#' + a.model.variant : '') : '');
         body.appendChild(F.grid([
           F.field({
-            label: 'النموذج', type: 'model', value: modelVal,
+            label: 'النموذج', type: 'modelpicker', value: modelVal,
             desc: 'الوكيل الفرعي يستخدم نموذجه المحدد، أو يرث نموذج الجلسة إذا لم يُحدَّد.',
             hint: 'الصيغة الموسّعة <code>{ providerID, model, variant }</code> مدعومة أيضاً في JSON.',
             onChange: v => put('model', v)

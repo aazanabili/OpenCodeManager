@@ -119,6 +119,12 @@
         });
         return sel;
       }
+      case 'modelpicker': {
+        return modelPicker(opts);
+      }
+      case 'agentpicker': {
+        return agentPicker(opts);
+      }
       case 'typedkv': {
         // A key/value editor with an explicit value type. Replaces raw JSON
         // for package-specific option bags.
@@ -307,6 +313,178 @@
       el('div', { class: 'order-note', html: opts.orderNote || '<b>القاعدة المطابقة الأخيرة تفوز.</b> ضع القواعد العامة أولاً ثم الاستثناءات بعدها. تُدمج القواعد بالترتيب: إعدادات ذات أولوية أقل ← القواعد العامة ← قواعد الوكيل.' })
     ]);
     return box;
+  }
+
+/* ---------------- searchable model picker ----------------
+     Replaces the free-text `provider/model#variant` field. The list comes
+     from the catalogue; providers declared in the user's own config are
+     merged in, local runtimes get a hint, and a value outside the
+     catalogue is preserved rather than silently dropped. */
+  function modelPicker(opts) {
+    const C = NS.Catalog;
+    if (!C) {
+      const fallback = el('input', { type: 'text', class: 'mono', dir: 'ltr', placeholder: 'anthropic/claude-sonnet-4-5#high' });
+      fallback.value = opts.value == null ? '' : String(opts.value);
+      fallback.addEventListener('input', u.debounce(() => opts.onChange && opts.onChange(fallback.value || undefined), 350));
+      return fallback;
+    }
+
+    const hidden = el('input', { type: 'hidden', value: opts.value == null ? '' : String(opts.value) });
+    const providerSel = el('select', { class: 'mp-provider' });
+    const modelRow = el('div', { class: 'mp-row' });
+    const variantRow = el('div', { class: 'mp-variant' });
+    const status = el('div', { class: 'mp-status' });
+
+    const wrap = el('div', { class: 'mpicker' }, [
+      hidden,
+      el('div', { class: 'mp-row' }, [providerSel]),
+      modelRow,
+      variantRow,
+      status
+    ]);
+
+    const custom = opts.customProviders || (NS.store && NS.store.S.data ? NS.store.S.data.providers : null);
+    const list = C.withCustom(custom);
+    let cur = C.parseRef(hidden.value);
+
+    function commit(providerId, modelId, variant) {
+      hidden.value = (providerId && modelId) ? providerId + '/' + modelId + (variant ? '#' + variant : '') : '';
+      cur = C.parseRef(hidden.value);
+      if (opts.onChange) opts.onChange(hidden.value || undefined);
+      renderStatus();
+    }
+
+    function renderProviders() {
+      u.clear(providerSel);
+      providerSel.appendChild(el('option', { value: '', text: '— اختر المزوّد —' }));
+      list.forEach(p => {
+        const n = Object.keys(p.models).length;
+        const suffix = p.custom ? ' · من إعداداتك'
+          : p.local ? ' · محلي'
+            : n ? ' · ' + n + ' نموذج' : ' · يُكتشف وقت التشغيل';
+        providerSel.appendChild(el('option', { value: p.id, text: p.name + ' — ' + p.id + suffix }));
+      });
+      providerSel.value = cur.providerId && C.has(cur.providerId) ? cur.providerId : '';
+      if (!providerSel.value) {
+        const withModels = list.find(p => Object.keys(p.models).length);
+        providerSel.value = withModels ? withModels.id : '';
+      }
+    }
+
+    function renderModels() {
+      u.clear(modelRow); u.clear(variantRow);
+      const pid = providerSel.value;
+      if (!pid) {
+        modelRow.appendChild(el('div', { class: 'empty', text: 'اختر مزوّداً لعرض نماذجه' }));
+        renderStatus();
+        return;
+      }
+      const p = C.get(pid);
+      const models = p ? Object.values(p.models) : [];
+      models.sort((a, b) => {
+        if ((b.release || '') !== (a.release || '')) return (b.release || '').localeCompare(a.release || '');
+        return (b.context || 0) - (a.context || 0);
+      });
+
+      const sel = el('select', { class: 'mp-model' });
+      sel.appendChild(el('option', {
+        value: '',
+        text: models.length ? '— اختر النموذج —'
+          : (p && p.hint) ? p.hint : '— لا نماذج معروفة —'
+      }));
+      models.forEach(m => {
+        const bits = [];
+        if (m.context) bits.push(C.fmtTokens(m.context));
+        if (m.toolCall) bits.push('أدوات');
+        if (m.reasoning) bits.push('استدلال');
+        if ((m.input || []).includes('image')) bits.push('صور');
+        sel.appendChild(el('option', { value: m.id, text: m.id + (bits.length ? '  ·  ' + bits.join(' · ') : '') }));
+      });
+
+      if (cur.modelId && cur.providerId === pid && !models.some(m => m.id === cur.modelId)) {
+        sel.appendChild(el('option', { value: cur.modelId, text: cur.modelId + '  ·  خارج الكتالوج' }));
+      }
+      if (cur.modelId && cur.providerId === pid) sel.value = cur.modelId;
+      sel.addEventListener('change', () => {
+        commit(pid, sel.value, sel.value ? cur.variant : '');
+        renderVariants();
+      });
+      modelRow.appendChild(sel);
+      renderVariants();
+      renderStatus();
+    }
+
+    function renderVariants() {
+      u.clear(variantRow);
+      const pid = providerSel.value;
+      const modelId = cur.providerId === pid ? cur.modelId : '';
+      if (!modelId) return;
+      const variants = C.variantsFor(pid, modelId);
+      if (!variants.length && !cur.variant) return;
+
+      const sel = el('select', { class: 'mp-vsel' });
+      sel.appendChild(el('option', { value: '', text: 'بدون variant' }));
+      variants.forEach(v => sel.appendChild(el('option', { value: v.id, text: v.label })));
+      if (cur.variant && !variants.some(v => v.id === cur.variant)) {
+        sel.appendChild(el('option', { value: cur.variant, text: cur.variant + ' (مخصص)' }));
+      }
+      sel.appendChild(el('option', { value: '__manual', text: 'أدخل variant يدوياً…' }));
+      sel.value = cur.variant || '';
+
+      sel.addEventListener('change', async () => {
+        if (sel.value === '__manual') {
+          const v = await u.promptBox('variant', 'اسم الـ variant (يُضاف بعد #)', cur.variant || '');
+          if (v && v.trim()) { commit(pid, modelId, v.trim()); }
+          sel.value = cur.variant || '';
+          renderVariants();
+          return;
+        }
+        commit(pid, modelId, sel.value);
+      });
+
+      variantRow.appendChild(el('span', { class: 'mp-lbl', text: '# variant' }));
+      variantRow.appendChild(sel);
+    }
+
+    function renderStatus() {
+      u.clear(status);
+      if (!hidden.value) { status.textContent = 'لم يُختر نموذج بعد'; return; }
+      const m = C.model(cur.providerId, cur.modelId);
+      if (!m) { status.textContent = hidden.value + ' — خارج الكتالوج، سيُحفظ كما هو'; return; }
+      const badges = [];
+      if (m.toolCall) badges.push('أدوات');
+      if (m.reasoning) badges.push('استدلال');
+      if (m.structuredOutput) badges.push('إخراج منظّم');
+      if ((m.input || []).includes('image')) badges.push('صور');
+      if ((m.input || []).includes('pdf')) badges.push('PDF');
+      u.clear(status);
+      status.appendChild(el('span', { class: 'mp-name', text: m.name }));
+      status.appendChild(el('span', { class: 'mp-meta', text: 'سياق ' + C.fmtTokens(m.context) + ' · إخراج ' + C.fmtTokens(m.maxOutput) }));
+      if (badges.length) status.appendChild(el('span', { class: 'mp-badges', text: badges.join(' · ') }));
+      if (m.costIn != null || m.costOut != null) {
+        status.appendChild(el('span', { class: 'mp-meta', text: C.fmtCost(m.costIn) + ' / ' + C.fmtCost(m.costOut) + ' لكل مليون توكن' }));
+      }
+    }
+
+    providerSel.addEventListener('change', () => {
+      commit(providerSel.value, '', '');
+      renderModels();
+    });
+
+    renderProviders();
+    renderModels();
+    return wrap;
+  }
+
+  /* ---------------- agent picker ---------------- */
+  function agentPicker(opts) {
+    const sel = el('select', {});
+    sel.appendChild(el('option', { value: '', text: '— أي وكيل (الافتراضي) —' }));
+    NS.store.agentIds().forEach(a => sel.appendChild(el('option', { value: a, text: a })));
+    const cur = NS.store.agentIds();
+    sel.value = cur.indexOf(opts.value) >= 0 ? opts.value : '';
+    sel.addEventListener('change', () => opts.onChange && opts.onChange(sel.value || undefined));
+    return sel;
   }
 
   /* ---------------- typed key/value editor ----------------

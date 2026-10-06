@@ -271,42 +271,82 @@
     };
   }
 
-  async function scanProjects() {
+  /**
+   * Walk every projects root concurrently.
+   * opts: { depth, concurrency, shouldStop, onProgress }
+   * Depth 2 only inspects the direct children — fast. Higher values walk
+   * deeper and find monorepo packages.
+   */
+  async function scanProjects(opts) {
+    opts = opts || {};
+    const maxDepth = opts.depth || MAX_DEPTH;
+    const concurrency = opts.concurrency || 12;
+    const shouldStop = opts.shouldStop || (() => false);
+    const onProgress = opts.onProgress || (() => { });
+
     const found = [];
+    const seen = new Set();
+
+    const accept = (info, rootId) => {
+      const id = rootId + '::' + info.relPath;
+      if (seen.has(id)) return;
+      seen.add(id);
+      found.push(Object.assign({ id, rootId }, info));
+      onProgress(found.length);
+    };
+
+    // a queue of directories still to visit, per root
+    const queues = [];
     for (const root of projectRoots()) {
       if (root.permission !== 'granted') continue;
-
-      const walk = async (relPath, depth) => {
-        if (found.length >= MAX_PROJECTS || depth > MAX_DEPTH) return;
-        let entries = [];
-        try {
-          const { dir } = await resolve(root.id, relPath ? relPath + '/x' : '', false);
-          for await (const [name, handle] of dir.entries()) entries.push({ name, kind: handle.kind });
-        } catch (_) { return; }
-
-        for (const e of entries) {
-          // skip build dirs and every dot-directory: `.opencode` is a config
-          // container, not a project in its own right
-          if (e.kind !== 'directory' || SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
-          const child = relPath ? relPath + '/' + e.name : e.name;
-          const info = await inspectDir(root.id, child);
-          if (info) found.push(Object.assign({ id: root.id + '::' + child, rootId: root.id }, info));
-          // descend anyway: monorepos nest packages
-          await walk(child, depth + 1);
-        }
-      };
-
-      // the projects root itself may be a project
+      queues.push({ rootId: root.id, pending: [''] });
       const self = await inspectDir(root.id, '');
-      if (self) found.push(Object.assign({ id: root.id + '::', rootId: root.id }, self));
-      await walk('', 0);
+      if (self) accept(self, root.id);
     }
 
-    // de-duplicate by id, sort by name
-    const seen = new Set();
-    API.projects = found
-      .filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; })
-      .sort((a, b) => a.name.localeCompare(b.name));
+    let active = 0;
+    // breadth-first: take the shallowest queued directory first
+    const take = (q) => {
+      if (!q.pending.length) return undefined;
+      q.pending.sort((a, b) => a.split('/').length - b.split('/').length);
+      return q.pending.shift();
+    };
+
+    const worker = async () => {
+      while (true) {
+        if (shouldStop()) return;
+        // find any queue with work
+        let q = null, rel = undefined;
+        for (const cand of queues) {
+          if (cand.pending.length) { q = cand; rel = take(cand); break; }
+        }
+        if (!q || rel === undefined) return;
+
+        let entries = [];
+        try {
+          const { dir } = await resolve(q.rootId, rel ? rel + '/x' : '', false);
+          for await (const [name, handle] of dir.entries()) entries.push({ name, kind: handle.kind });
+        } catch (_) { continue; }
+
+        for (const e of entries) {
+          // build outputs, dist, node_modules and every dot-directory are noise
+          if (e.kind !== 'directory' || SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
+          const child = rel ? rel + '/' + e.name : e.name;
+          const depth = child.split('/').length;
+          try {
+            const info = await inspectDir(q.rootId, child);
+            if (info) accept(info, q.rootId);
+          } catch (_) { /* unreadable folder: skip */ }
+          if (depth < maxDepth) q.pending.push(child);
+        }
+      }
+    };
+
+    const workers = [];
+    for (let i = 0; i < Math.max(1, Math.min(concurrency, 32)); i++) workers.push(worker());
+    await Promise.all(workers);
+
+    API.projects = found.sort((a, b) => a.name.localeCompare(b.name));
     API.scannedAt = Date.now();
     return API.projects;
   }

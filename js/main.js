@@ -16,8 +16,8 @@
         { id: 'permissions', icon: '🔐', label: 'الصلاحيات', count: () => (S.data.permissions || []).length },
         { id: 'policies', icon: '🛡', label: 'السياسات', count: () => u.get(S.data, 'experimental.policies', []).length },
         { id: 'mcp', icon: '🔌', label: 'خوادم MCP', count: () => Object.keys(u.get(S.data, 'mcp.servers', {})).length },
-        { id: 'providers', icon: '🧠', label: 'المزوّدون والنماذج', count: () => Object.keys(u.isObj(S.data.providers) ? S.data.providers : {}).length },
-        { id: 'skills', icon: '🧩', label: 'المهارات', count: () => (S.data.skills || []).length },
+        { id: 'providers', icon: '🧠', label: 'النماذج والمزوّدون', count: () => (NS.Catalog ? NS.Catalog.status().providers : 0) },
+        { id: 'skills', icon: '🧩', label: 'المهارات', count: () => (NS.skills ? NS.skills.list.length : 0) },
         { id: 'commands', icon: '⚡', label: 'الأوامر', count: () => Object.keys(u.isObj(S.data.commands) ? S.data.commands : {}).length },
         { id: 'plugins', icon: '🧱', label: 'الإضافات', count: () => (S.data.plugins || []).length },
         { id: 'formatters', icon: '🎨', label: 'المُنسِّقات', count: () => (u.isObj(S.data.formatter) ? Object.keys(S.data.formatter).length : (S.data.formatter ? 1 : 0)) },
@@ -27,17 +27,25 @@
       ]
     },
     {
-      title: 'إعدادات الطرفية (cli.json)', target: 'cli', items: [
-        { id: 'cli-appearance', icon: '🎨', label: 'المظهر' },
-        { id: 'cli-input', icon: '⌨', label: 'الإدخال' },
-        { id: 'cli-session', icon: '💬', label: 'الجلسات' },
+      title: 'الطرفية — ما تراه كل يوم', target: 'cli', items: [
+        { id: 'cli-appearance', icon: '🎨', label: 'المظهر والألوان' },
+        { id: 'cli-session', icon: '💬', label: 'عرض الجلسة' },
+        { id: 'cli-diffs', icon: '🔀', label: 'عرض الفروق' },
+        { id: 'cli-input', icon: '⌨', label: 'الإدخال واللصق' }
+      ]
+    },
+    {
+      title: 'الطرفية — التنظيم والأدوات', target: 'cli', items: [
         { id: 'cli-tabs', icon: '🗂', label: 'التبويبات' },
-        { id: 'cli-diffs', icon: '🔀', label: 'الفروق' },
-        { id: 'cli-attention', icon: '🔔', label: 'التنبيهات' },
-        { id: 'cli-terminal', icon: '🖥', label: 'الطرفية' },
-        { id: 'cli-mini', icon: '🧿', label: 'Mini' },
-        { id: 'cli-plugins', icon: '🧱', label: 'إضافات الطرفية' },
+        { id: 'cli-attention', icon: '🔔', label: 'التنبيهات والأصوات' },
+        { id: 'cli-terminal', icon: '🖥', label: 'سلوك الطرفية' },
+        { id: 'cli-mini', icon: '🧿', label: 'واجهة mini' }
+      ]
+    },
+    {
+      title: 'الطرفية — متقدم', target: 'cli', items: [
         { id: 'cli-keybinds', icon: '⌘', label: 'اختصارات المفاتيح' },
+        { id: 'cli-plugins', icon: '🧩', label: 'إضافات الطرفية' },
         { id: 'cli-debug', icon: '🐞', label: 'التشخيص والتجارب' }
       ]
     }
@@ -103,8 +111,8 @@
         ' لتبدأ.'
       ]));
       box.appendChild(el('div', { class: 'side-actions' }, [
-        F.btn('مجلد عام', { size: 'sm', icon: '🌐', onClick: () => addGlobalRoot() }),
-        F.btn('مجلد مشاريع', { size: 'sm', icon: '📂', onClick: () => addProjectsRoot() })
+        F.btn('مجلد عام', { size: 'sm', icon: '🌐', onClick: () => quickPickDialog('global') }),
+        F.btn('مجلد مشاريع', { size: 'sm', icon: '📂', onClick: () => quickPickDialog('projects') })
       ]));
       return;
     }
@@ -138,10 +146,99 @@
     });
 
     box.appendChild(el('div', { class: 'side-actions' }, [
-      F.btn('مجلد عام', { size: 'sm', icon: '🌐', onClick: () => addGlobalRoot() }),
-      F.btn('مجلد مشاريع', { size: 'sm', icon: '📂', onClick: () => addProjectsRoot() }),
-      F.btn('فحص', { size: 'sm', icon: '⟳', title: 'إعادة فحص المشاريع', onClick: () => rescan(true) })
+      F.btn('مجلد عام', { size: 'sm', icon: '🌐', onClick: () => quickPickDialog('global') }),
+      F.btn('مجلد مشاريع', { size: 'sm', icon: '📂', onClick: () => quickPickDialog('projects') }),
+      F.btn('فحص', { size: 'sm', icon: '⟳', title: 'إعادة فحص المشاريع', onClick: () => scanDialog() })
     ]));
+  }
+
+  /** Depth + concurrency are the two knobs that make discovery fast vs thorough. */
+  function scanDialog() {
+    let depth = 3, concurrency = 12;
+    const info = u.el('div', { class: 'small dim', style: { marginBottom: '10px' } });
+    const bar = u.el('div', { class: 'scan-bar' }, el('div', { class: 'scan-fill', style: { width: '0%' } }));
+    const fill = bar.firstChild;
+
+    const updateInfo = () => {
+      const label = depth <= 2 ? 'سريع' : depth <= 5 ? 'متوازن' : 'عميق';
+      info.textContent = 'عمق ' + depth + ' (' + label + ') · ' + concurrency + ' مجلدات متوازية';
+    };
+
+    const body = u.el('div', { class: 'grid' }, [
+      info, bar,
+      u.el('div', { class: 'field' }, [
+        u.el('label', { text: 'عمق الفحص' }),
+        u.el('input', {
+          type: 'range', min: '1', max: '8', value: String(depth), dir: 'ltr',
+          oninput: (e) => { depth = Number(e.target.value); updateInfo(); }
+        })
+      ]),
+      u.el('div', { class: 'field' }, [
+        u.el('label', { text: 'التوازي' }),
+        u.el('input', {
+          type: 'range', min: '4', max: '32', step: '2', value: String(concurrency), dir: 'ltr',
+          oninput: (e) => { concurrency = Number(e.target.value); updateInfo(); }
+        })
+      ]),
+      u.el('div', { class: 'info-box', html:
+        'عمق 2 يجد المشاريع في المجلدات المباشرة فقط وهو الأسرع. عمق 4–5 مناسبmost للمونوريبو. ' +
+        'عمق 8 يمرّ داخل node_modules ما لم يُتخطَّ — وهو أبطأ بكثير. ' +
+        'نتخطّى دائماً <code>node_modules</code> و<code>.git</code> وكل المجلدات المخفية.' })
+    ]);
+    updateInfo();
+
+    u.modal({
+      title: 'فحص المشاريع',
+      body,
+      buttons: [
+        { label: 'إغلاق', kind: 'ghost' },
+        {
+          label: 'ابدأ الفحص', kind: 'primary', close: false, onClick: async () => {
+            u.closeModal();
+            await rescanWithProgress({ depth, concurrency, fill });
+          }
+        }
+      ]
+    });
+  }
+
+  /** Scan with a live progress bar and the ability to stop. */
+  async function rescanWithProgress(opts) {
+    const fx = NS.fx;
+    fx.loading(true);
+    fx.scanNote('جارٍ الفحص…');
+
+    const t0 = Date.now();
+    const cancel = { off: false };
+    const stop = fx.toast('info', 'جارٍ الفحص — اضغط للإيقاف', 60000, { progress: true });
+
+    const controller = { cancel: () => { cancel.off = true; } };
+    NS.main.cancelScan = controller;
+
+    try {
+      const list = await NS.fs.scanProjects({
+        depth: opts.depth,
+        concurrency: opts.concurrency,
+        shouldStop: () => cancel.off,
+        onProgress: (n) => {
+          if (opts.fill) opts.fill.style.width = Math.min(100, n * 4) + '%';
+          fx.scanNote('فحص… عُثر على ' + n + ' مشروع');
+        }
+      });
+      S.projects = list;
+      const ms = Date.now() - t0;
+      if (cancel.off) fx.toast('warn', 'أُوقف الفحص — عُثر على ' + list.length + ' مشروع');
+      else fx.toast('scan', list.length
+        ? 'عُثر على ' + list.length + ' مشروع في ' + ms + ' مللي ثانية'
+        : 'لم يُعثر على مشاريع', 3400);
+    } catch (e) {
+      fx.toast('err', 'فشل الفحص: ' + e.message);
+    } finally {
+      if (stop && stop.close) stop.close();
+      fx.loading(false);
+      NS.main.cancelScan = null;
+      render();
+    }
   }
 
   /* ---------------- scope opening ---------------- */
@@ -226,6 +323,71 @@
       u.toast('ok', 'تمت إضافة مجلد المشاريع: ' + root.name);
     } catch (e) { u.toast('err', 'تعذّر الربط: ' + e.message); }
     render();
+  }
+
+  /**
+   * A page cannot list drives, but it can tell you where they usually are and
+   * open the system picker at a sensible starting point.
+   */
+  function quickPickDialog(kind) {
+    const p = NS.OS.expectedPaths();
+    const body = u.el('div', { class: 'grid' });
+
+    body.appendChild(u.el('div', { class: 'info-box', html:
+      'اكتشفنا نظامك: <b>' + u.esc(p.osLabel) + '</b>' + (p.arch ? ' · ' + u.esc(p.arch) : '') +
+      '.<br>المسار المتوقع لإعدادات <span class="ltr">opencode</span> العامة: <code>' + u.esc(p.globalConfig) + '</code>' }));
+
+    const userIn = u.el('input', { type: 'text', dir: 'ltr', placeholder: 'اسم المستخدم (اختياري)' });
+    userIn.value = p.user || '';
+    body.appendChild(u.el('div', { class: 'field' }, [
+      u.el('label', { text: 'اسم المستخدم — يملأ المسارات أعلاه بدقة' }), userIn,
+      u.el('span', { class: 'desc', text: 'المتصفح لا يستطيع كشفه تلقائياً؛ إن كتبته هنا نحفظه ونحدّث كل المسارات المقترحة.' })
+    ]));
+
+    const targets = kind === 'global'
+      ? [{ label: 'مجلد الإعدادات العامة', path: p.globalConfig },
+      { label: 'مجلد بيانات OpenCode (قد يحتوي auth.json)', path: p.dataDir }]
+      : p.projectRoots.map(x => ({ label: 'مجلد مشاريع', path: x }));
+
+    const grid = u.el('div', { class: 'quick-grid' });
+    const refresh = () => {
+      u.clear(grid);
+      const cur = NS.OS.expectedPaths();
+      const list = kind === 'global'
+        ? [{ label: 'مجلد الإعدادات العامة', path: cur.globalConfig },
+        { label: 'مجلد بيانات OpenCode', path: cur.dataDir }]
+        : cur.projectRoots.map(x => ({ label: 'مجلد مشاريع', path: x }));
+      list.forEach(t => {
+        grid.appendChild(u.el('button', {
+          class: 'quick-path', title: 'اضغط للنسخ · ' + t.path, dir: 'ltr',
+          onclick: async () => {
+            try {
+              await navigator.clipboard.writeText(t.path);
+              u.toast('ok', 'نُسخ المسار: ' + t.path, 2400);
+            } catch (e) { u.toast('info', t.path, 4000); }
+          }
+        }, t.path));
+      });
+      grid.appendChild(u.el('button', {
+        class: 'quick-path', title: 'فتح منتقي النظام',
+        onclick: () => { u.closeModal(); (kind === 'global' ? addGlobalRoot : addProjectsRoot)(); }
+      }, '📂 افتح منتقي النظام…'));
+    };
+    refresh();
+    userIn.addEventListener('input', u.debounce(() => { NS.OS.saveUsername(userIn.value.trim()); refresh(); }, 300));
+
+    body.appendChild(u.el('div', { class: 'field' }, [
+      u.el('label', { text: kind === 'global' ? 'مسارات عامة متوقعة — انقر لنسخها' : 'مواقع مشاريع متوقعة — انقر لنسخها' }),
+      grid
+    ]));
+    body.appendChild(u.el('div', { class: 'info-box', html:
+      'الويب لا يستطيع قراءة المسارات أو سرد الأقراص. لذلك نعرض المسار المتوقع لتنتقل إليه في نافذة النظام، أو تستخدم زر «فتح منتقي النظام» وتوصل إلى المجلد بنفسك.' }));
+
+    u.modal({
+      title: kind === 'global' ? 'مجلد الإعدادات العامة' : 'مجلد المشاريع',
+      body, wide: true,
+      buttons: [{ label: 'إغلاق', kind: 'ghost' }]
+    });
   }
 
   async function loadGlobal() {
@@ -338,7 +500,7 @@
     const note = $('#fsSupport');
     if (!note) return;
     note.textContent = NS.fs.supported()
-      ? 'امنح الإذن مرة واحدة لمجلد الإعدادات العامة ومجلدات مشاريعك،。之后 تُقرأ وتُحفظ التغييرات تلقائياً على القرص.'
+      ? 'امنح الإذن مرة واحدة لمجلد الإعدادات العامة ومجلدات مشاريعك، وبعدها تُقرأ وتُحفظ التغييرات تلقائياً على القرص.'
       : '⚠ متصفحك لا يدعم الوصول للقرص. استخدم Chrome أو Edge.';
   }
 
@@ -455,6 +617,9 @@
     bind();
     ST.on(() => updateButtons());
 
+    // catalogue: bundled snapshot first, refresh in the background
+    if (NS.Catalog) NS.Catalog.init().catch(() => { });
+
     if (!NS.fs.supported()) {
       render();
       return;
@@ -469,6 +634,7 @@
       await loadGlobal();
       await rescan(false);
     }
+    if (NS.skills) NS.skills.discover({ remote: true }).catch(() => { });
     render();
 
     window.addEventListener('hashchange', () => {
