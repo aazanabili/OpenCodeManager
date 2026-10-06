@@ -33,6 +33,10 @@
       ]
     }));
 
+    root.appendChild(F.sectionNote(
+      '<b>لماذا لم تُكتشف مهاراتي؟</b> الاكتشاف يقرأ مجلد <code>~/.config/opencode/skills</code> ومجلد <code>.opencode/skills</code> داخل كل مشروع. <b>يجب منح صلاحية المجلد العام</b> مرة واحدة من شاشة الترحيب حتى تستطيع الأداة قراءته. المهارات المكتشفة هنا للقراءة فقط؛ <b>لإنشاء مهارة جديدة</b> استخدم زر «مهارة جديدة».',
+      'info'));
+
     /* ---------- extra sources configured by the user ---------- */
     const c0 = F.card({
       title: 'مصادر إضافية',
@@ -272,7 +276,17 @@ metadata:
       actions: [F.btn('أمر جديد', { kind: 'primary', icon: '+', onClick: () => newCommand() })]
     }));
 
-    if (!names.length) root.appendChild(el('div', { class: 'empty', text: 'لا توجد أوامر في هذا الملف.' }));
+    root.appendChild(F.sectionNote(
+      '<b>ما الهدف منها؟</b> اكتب في الشريط <code>/اسم الأمر …</code> فيُرسل OpenCode النص الذي تبنيه من القالب مع الوكلاء المحددين. مثال: <code>/review src/api.ts</code> يصبح «راجع src/api.ts». <b>اختصار للقوالب المتكررة</b> + <b>تثبيت الوكيل والنموذج</b> للأمر.',
+      'info'));
+
+    if (!names.length) {
+      root.appendChild(el('div', { class: 'empty' }, [
+        'لا توجد أوامر في هذا الملف.',
+        el('br'),
+        el('span', { class: 'small' }, 'ابدأ بأمر بسيط مثل «commit» أو «review» واستخدم قالباً مع $ARGUMENTS.')
+      ]));
+    }
 
     const wrap = el('div', { class: 'items' });
     names.forEach(name => {
@@ -535,6 +549,10 @@ opencode plugin remove opencode-acme-plugin@1.2.0`) }));
       icon: '🎨', title: 'المُنسِّقات (Formatters)', doc: 'formatters',
       desc: 'تُنسِّق OpenCode الملفات بعد تغيّرها عبر <code>write</code> أو <code>edit</code> أو <code>patch</code>. التنسيق معطّل افتراضياً.'
     }));
+
+    root.appendChild(F.sectionNote(
+      '<b>ما الهدف منها؟</b> تُشغّل OpenCode مُنسِّقاً (gofmt، prettier، biome…) على الملف بعد كل تعديل يمر عبر <code>write</code>/<code>edit</code>/<code>patch</code>. <b>معطّلة افتراضياً</b>. اختر <code>true</code> لتفعيل كل المدمج، أو <code>{}</code> لتفعيل مع تخصيصاتك.',
+      'info'));
 
     const c = F.card({ title: 'التفعيل', desc: 'القيمة <code>true</code> تفعّل كل المدمج وتصفّر التخصيصات. الكائن <code>{}</code> يحافظ على الموروث. <code>false</code> يعطّل كل التنسيق.' });
     c.body.appendChild(F.grid([
@@ -835,7 +853,15 @@ opencode plugin remove opencode-acme-plugin@1.2.0`) }));
       desc: 'اجعل مجلدات محلية أو مستودعات Git متاحة ك سياق مساند باسم. يُدمج محتواها في سياق الوكيل.'
     }));
 
-    if (!names.length) root.appendChild(el('div', { class: 'empty', text: 'لا توجد مراجع. أضف واحداً ليجعل مجلداً أو مستودعاً متاحاً للوكلاء.' }));
+    root.appendChild(F.sectionNote(
+      '<b>ما الهدف منها؟</b> «سياق مساند» يُحقن تلقائياً في كل جلسة. مفيد لربط توثيق المنتج، مخططات النظام، أو قواعد الشركة بالوكيل. <b>فرقها عن المهارات:</b> المهارة تُحقن عند الطلب («skill <code>review</code>»)، أما المرجع فيُحمَّل ضمنياً. فرقها عن التعليمات: التعليمات قواعد السلوك (AGENTS.md)، والمراجع مادة مرجعية.',
+      'info'));
+
+    if (!names.length) root.appendChild(el('div', { class: 'empty' }, [
+      'لا توجد مراجع.',
+      el('br'),
+      el('span', { class: 'small' }, 'مثال مفيد: «product-docs» لمجلد ../product-docs أو «effect» لمستودع Effect-TS/effect.')
+    ]));
 
     const wrap = el('div', { class: 'items' });
     names.forEach(name => {

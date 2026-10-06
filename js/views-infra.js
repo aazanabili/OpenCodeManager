@@ -17,6 +17,9 @@
       desc: 'تُعرَّف تحت <code>mcp.servers</code> في V2 (ليست مباشرة تحت <code>mcp</code>). تتصل تلقائياً ما لم تُعطَّل بـ <code>disabled</code>.',
       actions: [F.btn('خادم جديد', { kind: 'primary', icon: '+', onClick: () => newServer() })]
     }));
+    root.appendChild(F.sectionNote(
+      '<b>ما هو MCP؟</b> بروتوكول <i>Model Context Protocol</i> يربط OpenCode بأدوات خارجية (بحث، قاعدة بيانات، متصفح، إلخ). خادم MCP محلي يشغّل عملية stdio. خادم بعيد يُتصل به عبر رابط HTTPS. <b>كل أداة من الخادم تظهر للوكيل كإجراء</b> بالشكل <code>&lt;server&gt;_&lt;tool&gt;</code> — وتستطيع تقييدها من قسم الصلاحيات.',
+      'info'));
     const c0 = F.card({ title: 'المهلات العامة', desc: 'بالمللي ثانية. ي/object الخادم يتجاوز القيم المطابقة.' });
     const td = u.get(d, 'mcp.timeout', {});
     c0.body.appendChild(F.grid([
@@ -335,7 +338,51 @@ opencode mcp logout sentry`) }));
         } })
       ]
     }));
+
+    root.appendChild(F.sectionNote(
+      '<b>أين أجد المزوّدين المتصلين؟</b> الأمر <code>opencode /connect</code> يحفظ بيانات الاعتماد في <code>~/.local/share/opencode/auth.json</code> — <b>وليس</b> في <code>opencode.json</code>. نقرأ هذا الملف تلقائياً ونعرض المتصلين هنا. إذا لم يظهر مزوّد فأنت لم تمنح الإذن لمجلد الإعدادات العامة بعد.',
+      'info'));
+
     if (!C) { root.appendChild(el('div', { class: 'err-box' }, 'تعذّر تحميل وحدة الكتالوج.')); return; }
+
+    /* ---------- connected providers (from ~/.local/share/opencode/auth.json) ---------- */
+    const authCard = el('div', { class: 'card' });
+    const authHead = el('div', { class: 'card-head' }, [
+      el('h3', { text: 'المزوّدون المتصلون فعلياً (auth.json)' }),
+      el('div', { class: 'spacer' }),
+      F.btn('إعادة القراءة', { size: 'sm', icon: '⟳', onClick: () => NS.main.render() })
+    ]);
+    authCard.appendChild(authHead);
+    const authBody = el('div', { class: 'card-body' });
+    authCard.appendChild(authBody);
+    NS.fs.readAuth().then(r => {
+      u.clear(authBody);
+      if (!r.ok) {
+        authBody.appendChild(F.hint('لم نتمكن من قراءة <code>~/.local/share/opencode/auth.json</code>: ' + r.reason + '. السبب الشائع: لم تمنح صلاحية المجلد الأصلي <code>~</code>، أو المجلد العام الممنوح ليس <code>~/.config/opencode</code>.'));
+        return;
+      }
+      const keys = Object.keys(r.data || {});
+      if (!keys.length) {
+        authBody.appendChild(F.hint('لا مزوّدين متصلين. شغّل <code>opencode /connect &lt;provider&gt;</code> من الطرفية للربط.'));
+        return;
+      }
+      const grid = el('div', { class: 'grid c3' });
+      keys.forEach(k => {
+        const v = r.data[k] || {};
+        const type = v.type || (v.access_token ? 'oauth' : v.api_key ? 'api_key' : 'unknown');
+        grid.appendChild(el('div', { class: 'card' }, [
+          el('div', { class: 'card-head tight' }, el('h4', { text: k })),
+          el('div', { class: 'card-body' }, [
+            el('span', { class: 'pill green', text: '✓ متصل' }),
+            el('span', { class: 'pill mono', text: type }),
+            v.expires ? el('span', { class: 'pill', text: 'ينتهي ' + new Date(v.expires).toLocaleDateString('ar') }) : null,
+            el('pre', { class: 'snippet', style: { marginTop: '8px' }, text: JSON.stringify(v, null, 2) })
+          ])
+        ]));
+      });
+      authBody.appendChild(grid);
+    });
+    root.appendChild(authCard);
     const st = C.status();
     /* ---------- catalogue status ---------- */
     const c0 = F.card({
@@ -683,19 +730,66 @@ opencode mcp logout sentry`) }));
     return it;
   }
   function newProvider() {
+    /* Wizard: pick a catalogue provider to clone, OR build a fresh one. The
+       wizard gives three preset buttons (most-used packages) plus full custom
+       fields. This replaces the old 3-field modal which was hard to find. */
+    const C = NS.Catalog;
     const id = u.el('input', { type: 'text', class: 'mono', placeholder: 'acme', dir: 'ltr' });
-    const pkg = u.el('select', {}, [
-      el('option', { value: '@opencode/ai/providers/openai-compatible', text: 'openai-compatible' }),
-      el('option', { value: '@opencode/ai/providers/anthropic', text: 'anthropic' }),
-      el('option', { value: '', text: '— احذف لاستخدام المدمج —' })
-    ]);
+    const canonical = u.el('select', { class: 'mono', dir: 'ltr' });
+    canonical.appendChild(el('option', { value: '', text: '— لا (مزوّد خاص بالكامل) —' }));
+    if (C) {
+      C.withCustom({}).forEach(p => {
+        canonical.appendChild(el('option', { value: p.id, text: p.name + ' — ' + p.id }));
+      });
+    }
+    const pkg = u.el('select', { class: 'mono', dir: 'ltr' });
+    [
+      '',
+      '@opencode/ai/providers/openai-compatible',
+      '@opencode/ai/providers/openai',
+      '@opencode/ai/providers/anthropic',
+      '@opencode/ai/providers/anthropic-compatible',
+      '@opencode/ai/providers/google-vertex',
+      '@opencode/ai/providers/amazon-bedrock',
+      '@opencode/ai/providers/azure',
+      '@opencode/ai/providers/openrouter'
+    ].forEach(x => pkg.appendChild(el('option', { value: x, text: x || '— احذف لاستخدام المدمج —' })));
     const b64 = u.el('input', { type: 'text', dir: 'ltr', placeholder: 'https://llm.acme.example/v1' });
+    const env = u.el('input', { type: 'text', dir: 'ltr', placeholder: 'ACME_API_KEY' });
+
+    const presets = el('div', { class: 'np-presets' });
+    [
+      { id: 'openai-compatible', pkg: '@opencode/ai/providers/openai-compatible', label: 'OpenAI متوافق', baseURL: 'https://api.openai.com/v1' },
+      { id: 'anthropic', pkg: '@opencode/ai/providers/anthropic', label: 'Anthropic', baseURL: 'https://api.anthropic.com' },
+      { id: 'ollama', pkg: '', label: 'Ollama (محلي)', baseURL: 'http://localhost:11434/v1' },
+      { id: 'vllm', pkg: '', label: 'vLLM (محلي)', baseURL: 'http://localhost:8000/v1' },
+      { id: 'lmstudio', pkg: '', label: 'LM Studio (محلي)', baseURL: 'http://localhost:1234/v1' }
+    ].forEach(p => {
+      presets.appendChild(F.btn(p.label, {
+        size: 'sm', onClick: () => {
+          id.value = p.id;
+          pkg.value = p.pkg;
+          b64.value = p.baseURL;
+          env.value = '';
+        }
+      }));
+    });
+
     u.modal({
       title: 'مزوّد جديد',
       body: el('div', { class: 'grid' }, [
-        el('div', { class: 'field' }, [el('label', { text: 'معرّف المزوّد' }), id]),
+        el('div', { class: 'field' }, [
+          el('label', { text: 'قوالب سريعة' }, []),
+          presets,
+          el('span', { class: 'desc', text: 'تعبئة سريعة — عدّل قبل الإنشاء.' })
+        ]),
+        el('div', { class: 'field' }, [el('label', { text: 'معرّف المزوّد' }), id,
+          el('span', { class: 'desc', text: 'المعرّف الذي ستستخدمه في الحقول مثل <code>model</code> (مثال: acme).' })]),
+        el('div', { class: 'field' }, [el('label', { text: 'canonical — يرث إعدادات مزوّد معروف' }), canonical,
+          el('span', { class: 'desc', text: 'اختر مزوّداً من الكتالوج ليرث المزوّد الجديد افتراضياته (الحدود، التسعير، …).' })]),
         el('div', { class: 'field' }, [el('label', { text: 'package' }), pkg]),
-        el('div', { class: 'field' }, [el('label', { text: 'settings.baseURL' }), b64])
+        el('div', { class: 'field' }, [el('label', { text: 'settings.baseURL' }), b64]),
+        el('div', { class: 'field' }, [el('label', { text: 'env — متغير للمفتاح (اختياري)' }), env])
       ]),
       buttons: [
         { label: 'إلغاء', kind: 'ghost' },
@@ -706,8 +800,13 @@ opencode mcp logout sentry`) }));
             ST.edit(x => {
               const node = u.ensure(x, ['providers', n]);
               if (!u.isObj(node.models)) node.models = {};
-              u.setOrDelete(node, 'package', pkg.value);
-              if (b64.value.trim()) u.set(node, 'settings', { baseURL: b64.value.trim() });
+              u.setOrDelete(node, 'package', pkg.value || undefined);
+              u.setOrDelete(node, 'canonical', canonical.value || undefined);
+              const envs = env.value.trim() ? [env.value.trim()] : [];
+              u.setOrDelete(node, 'env', envs, envs.length);
+              const settings = {};
+              if (b64.value.trim()) settings.baseURL = b64.value.trim();
+              u.setOrDelete(node, 'settings', settings, Object.keys(settings).length);
             });
             u.closeModal(); NS.main.render();
             u.toast('ok', 'أُنشئ المزوّد ' + n);

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenCode Manager — لوحة تحكم إعدادات OpenCode</title>
+<title>OpenCode Manager</title>
 <link rel="stylesheet" href="assets/styles.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230b1220'/><path d='M28 34h44M28 50h30M28 66h38' stroke='%2338bdf8' stroke-width='8' stroke-linecap='round'/></svg>">
 </head>
@@ -15,7 +15,7 @@
     <span class="brand-mark">OC</span>
     <div class="brand-text">
       <strong>OpenCode Manager</strong>
-      <small>لوحة تحكم إعدادات OpenCode V2 — تعمل محلياً بدون سيرفر</small>
+      <small id="brandSub">لوحة تحكم إعدادات OpenCode V2 — تعمل محلياً بدون سيرفر</small>
     </div>
   </div>
 
@@ -30,13 +30,16 @@
   </div>
 
   <div class="topbar-actions">
-    <button class="btn ghost" id="btnConnect" title="منح الإذن لمجلد إعدادات OpenCode">فتح مجلد</button>
-    <button class="btn ghost" id="btnExport" title="تنزيل الملف الحالي">تصدير</button>
+    <button class="btn ghost" id="btnConnect" title="منح الإذن لمجلد إعدادات OpenCode" data-i18n="btn.connect">فتح مجلد</button>
+    <button class="btn ghost" id="btnExport" title="تنزيل الملف الحالي" data-i18n="btn.export">تصدير</button>
+    <span class="sep"></span>
+    <button class="theme-btn" id="btnTheme" title="تبديل المظهر (نهاري / ليلي / تلقائي)">🌙</button>
+    <button class="theme-btn" id="btnLang" title="تبديل اللغة (عربي / English)">EN</button>
     <span class="sep"></span>
     <button class="btn ghost icon" id="btnUndo" title="تراجع (Ctrl+Z)" disabled>&#8630;</button>
     <button class="btn ghost icon" id="btnRedo" title="إعادة (Ctrl+Shift+Z)" disabled>&#8631;</button>
     <span class="sep"></span>
-    <button class="btn primary" id="btnSave">حفظ <kbd>Ctrl+S</kbd></button>
+    <button class="btn primary" id="btnSave"><span data-i18n="btn.save">حفظ</span> <kbd>Ctrl+S</kbd></button>
   </div>
 </header>
 
@@ -45,7 +48,7 @@
   <!-- ============ Sidebar ============ -->
   <aside class="sidebar" id="sidebar">
     <div id="scopeList" class="scope-list"></div>
-    <input type="search" id="navSearch" class="nav-search" placeholder="بحث في الأقسام…" autocomplete="off">
+    <input type="search" id="navSearch" class="nav-search" placeholder="بحث في الأقسام…" data-i18n-ph="search.nav" autocomplete="off">
 
     <nav id="nav"></nav>
 
@@ -64,29 +67,29 @@
   <main class="main" id="main">
     <div class="welcome" id="welcome">
       <div class="welcome-card">
-        <h1>اربط مجلداتك</h1>
-        <p>هذه الأداة تقرأ ملفات إعدادات OpenCode مباشرة على جهازك وتكتب تعديلاتك إليها. لا يوجد سيرفر ولا تُرسل أي بيانات إلى الإنترنت.</p>
+        <h1 data-i18n="welcome.h1">اربط مجلداتك</h1>
+        <p data-i18n="welcome.p">هذه الأداة تقرأ ملفات إعدادات OpenCode مباشرة على جهازك وتكتب تعديلاتك إليها. لا يوجد سيرفر ولا تُرسل أي بيانات إلى الإنترنت.</p>
 
         <div class="connect-grid">
           <div class="connect-card">
             <div class="cc-icon">🌐</div>
-            <h3>الإعدادات العامة</h3>
-            <p>مجلد <code>~/.config/opencode</code> — إعدادات تسري على <b>كل</b> مشاريعك على هذا الجهاز.</p>
-            <button class="btn primary block" id="btnConnect2">اختيار مجلد الإعدادات العامة</button>
+            <h3 data-i18n="welcome.global">الإعدادات العامة</h3>
+            <p data-i18n="welcome.global.p">مجلد <code>~/.config/opencode</code> — إعدادات تسري على <b>كل</b> مشاريعك على هذا الجهاز.</p>
+            <button class="btn primary block" id="btnConnect2" data-i18n="welcome.connect.btn">اختيار مجلد الإعدادات العامة</button>
           </div>
           <div class="connect-card">
             <div class="cc-icon">📂</div>
-            <h3>مجلدات المشاريع</h3>
-            <p>مجلد واحد أو أكثر يحتوي مشاريعك. تفحص الأداة كل مجلد فرعي وتعرض ما فيه إعداد OpenCode.</p>
-            <button class="btn primary block" id="btnImport2">إضافة مجلد مشاريع</button>
+            <h3 data-i18n="welcome.projects">مجلدات المشاريع</h3>
+            <p data-i18n="welcome.projects.p">مجلد واحد أو أكثر يحتوي مشاريعك. تفحص الأداة كل مجلد فرعي وتعرض ما فيه إعداد OpenCode.</p>
+            <button class="btn primary block" id="btnImport2" data-i18n="welcome.addprojects">إضافة مجلد مشاريع</button>
           </div>
         </div>
 
         <ul class="welcome-list">
-          <li>بعد المنحة تتكرر تلقائياً في كل فتح: تُقرأ الإعدادات العامة، وتُفحص المشاريع، وتُحدَّث فوراً.</li>
-          <li>اضغط أي مشروع من القائمة لعرض إعداداته وتعديلها.</li>
-          <li>التعديل داخل مشروع يبقى فيه فقط ولا يمسّ الإعدادات العامة.</li>
-          <li>كل حفظ يكتب نسخة <code>.backup</code> بجانب الملف.</li>
+          <li data-i18n="welcome.li1">بعد المنحة تتكرر تلقائياً في كل فتح: تُقرأ الإعدادات العامة، وتُفحص المشاريع، وتُحدَّث فوراً.</li>
+          <li data-i18n="welcome.li2">اضغط أي مشروع من القائمة لعرض إعداداته وتعديلها.</li>
+          <li data-i18n="welcome.li3">التعديل داخل مشروع يبقى فيه فقط ولا يمسّ الإعدادات العامة.</li>
+          <li data-i18n="welcome.li4">كل حفظ يكتب نسخة <code>.backup</code> بجانب الملف.</li>
         </ul>
         <p class="welcome-note" id="fsSupport"></p>
       </div>
@@ -121,6 +124,8 @@
 <script src="js/osinfo.js"></script>
 <script src="js/skills.js"></script>
 <script src="js/fx.js"></script>
+<script src="js/theme.js"></script>
+<script src="js/lang.js"></script>
 <script src="js/form.js"></script>
 <script src="js/fileviews.js"></script>
 <script src="js/views-core.js"></script>

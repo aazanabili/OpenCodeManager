@@ -463,6 +463,7 @@
       view.appendChild(el('div', { class: 'err-box' }, 'حدث خطأ في عرض هذا القسم: ' + e.message));
       view.appendChild(el('pre', { class: 'snippet', text: (e.stack || '') }));
     }
+    NS.fx && NS.fx.bindTipsIn(view);
     updateButtons();
   }
 
@@ -568,8 +569,7 @@
   function bind() {
     $('#btnConnect').addEventListener('click', addGlobalRoot);
     $('#btnConnect2').addEventListener('click', addGlobalRoot);
-    $('#btnImport').addEventListener('click', addGlobalRoot);
-    $('#btnImport2').addEventListener('click', addGlobalRoot);
+    $('#btnImport2').addEventListener('click', addProjectsRoot);
     $('#btnExport').addEventListener('click', doExport);
     $('#btnSave').addEventListener('click', save);
     $('#btnUndo').addEventListener('click', () => { if (ST.undo()) { NS.fx.historyToast('undo'); render(); } });
@@ -577,6 +577,29 @@
     $('#navSearch').addEventListener('input', u.debounce(() => buildNav($('#navSearch').value), 150));
     $('#modalClose').addEventListener('click', u.closeModal);
     $('#modalBackdrop').addEventListener('mousedown', (e) => { if (e.target.id === 'modalBackdrop') u.closeModal(); });
+
+    /* Theme toggle: cycle dark → light → auto → dark. The button shows the
+       current mode as a moon/sun/A glyph. */
+    const themeBtn = $('#btnTheme');
+    const refreshThemeGlyph = () => {
+      if (!themeBtn) return;
+      const c = NS.theme.current();
+      themeBtn.textContent = c === 'light' ? '☀' : c === 'auto' ? '◐' : '🌙';
+      themeBtn.title = 'تبديل المظهر (الحالي: ' + (c === 'light' ? 'نهاري' : c === 'dark' ? 'ليلي' : 'تلقائي') + ')';
+    };
+    if (themeBtn) themeBtn.addEventListener('click', () => { NS.theme.cycle(); refreshThemeGlyph(); });
+    refreshThemeGlyph();
+
+    /* Language toggle: AR ↔ EN. Re-renders the page after switching. */
+    const langBtn = $('#btnLang');
+    const refreshLangLabel = () => {
+      if (!langBtn) return;
+      const c = NS.lang.current();
+      langBtn.textContent = c === 'en' ? 'AR' : 'EN';
+      langBtn.title = c === 'en' ? 'Switch to Arabic' : 'Switch to English';
+    };
+    if (langBtn) langBtn.addEventListener('click', () => { NS.lang.toggle(); refreshLangLabel(); NS.main.render(); });
+    refreshLangLabel();
 
     document.querySelectorAll('.target-btn').forEach(b => {
       b.addEventListener('click', () => {
@@ -644,5 +667,7 @@
   }
 
   NS.main = { go, render, save, rescan, openProject, openGlobal, addGlobalRoot, addProjectsRoot, loadGlobal };
+  if (NS.theme) NS.theme.init();
+  if (NS.lang) { NS.lang.init(); NS.lang.applyDom(); }
   document.addEventListener('DOMContentLoaded', boot);
 })(window.OCM);

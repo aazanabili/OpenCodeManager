@@ -162,6 +162,43 @@
   /* ---------------- roots management ---------------- */
   const uid = () => 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
+  /** The id of the first registered 'global' root, or null if none. */
+  function globalRootId() {
+    const g = (API.roots || []).find(r => r.kind === 'global');
+    return g ? g.id : null;
+  }
+
+  /** Try to read ~/.local/share/opencode/auth.json from the granted global root.
+     The user grants ~/.config/opencode as the global root; auth.json lives in a
+     *sibling* directory, so this can fail with permission errors. We return
+     { ok:false, reason } in that case so the UI can ask for the right grant. */
+  async function readAuth() {
+    const rid = globalRootId();
+    if (!rid) return { ok: false, reason: 'no-global-root' };
+    // The global root is usually ~/.config/opencode; auth lives at ../.local/share/opencode/auth.json
+    // We don't know the absolute path, so we attempt to climb using the FileSystemDirectoryHandle
+    try {
+      const root = (API.roots || []).find(r => r.id === rid);
+      if (!root || !root.handle) return { ok: false, reason: 'no-handle' };
+      const parent = await root.handle.getParent?.();
+      if (!parent) return { ok: false, reason: 'no-parent' };
+      // Try local/share/opencode/auth.json under parent
+      const localShare = await parent.getDirectoryHandle('local', { create: false }).catch(() => null);
+      if (!localShare) return { ok: false, reason: 'parent-no-local' };
+      const share = await localShare.getDirectoryHandle('open', { create: false }).catch(() => null);
+      if (!share) return { ok: false, reason: 'parent-no-opencode' };
+      const code = await share.getDirectoryHandle('opencode', { create: false }).catch(() => null);
+      if (!code) return { ok: false, reason: 'parent-no-opencode-dir' };
+      const fh = await code.getFileHandle('auth.json', { create: false }).catch(() => null);
+      if (!fh) return { ok: false, reason: 'no-auth-json' };
+      const text = await (await fh.getFile()).text();
+      const data = JSON.parse(text);
+      return { ok: true, data, text };
+    } catch (e) {
+      return { ok: false, reason: e && e.name || 'error' };
+    }
+  }
+
   async function addRoot(kind) {
     if (!supported()) {
       u.toast('warn', 'المتصفح لا يدعم الوصول للقرص. استخدم Chrome أو Edge.', 6000);
@@ -394,6 +431,6 @@
     API, supported, addRoot, removeRoot, persist, restore, reauthorizeAll, needsPermission,
     globalRoot, projectRoots, scanProjects, projectById, projectConfigPath, inspectDir,
     readFile, writeFile, writeSafe, removePath, listDir, walkFiles, ensurePermission,
-    ctx, join, PROJECT_CONFIG_FILES
+    ctx, join, PROJECT_CONFIG_FILES, readAuth, globalRootId
   };
 })(window.OCM);

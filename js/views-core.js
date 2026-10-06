@@ -279,8 +279,19 @@
     c6.body.appendChild(F.grid([
       F.field({ label: 'ضغط تلقائي', type: 'bool', value: u.get(d, 'compaction.auto', true), desc: '<code>false</code> يوقف الضغط التلقائي الجديد دون حذف نقاط الحفظ الموجودة', onChange: v => ST.edit(x => { if (v === true) delete x.compaction; else u.set(x, 'compaction.auto', false); }) }),
       F.field({ label: 'عدد التوكنات المحفوظة', type: 'number', min: 0, value: u.get(d, 'compaction.keep.tokens', 15000), desc: 'الافتراضي 15000', onChange: v => ST.edit(x => u.setOrDelete(x, 'compaction.keep.tokens', v)) }),
-      F.field({ label: 'المخزن الاحتياطي (buffer)', type: 'number', min: 0, value: u.get(d, 'compaction.buffer', 20000), desc: 'هامش فوق حدود النموذج قبل بدء الضغط', onChange: v => ST.edit(x => u.setOrDelete(x, 'compaction.buffer', v)) })
-    ], 'c3'));
+      F.field({ label: 'المخزن الاحتياطي (buffer)', type: 'number', min: 0, value: u.get(d, 'compaction.buffer', 20000), desc: 'هامش فوق حدود النموذج قبل بدء الضغط', onChange: v => ST.edit(x => u.setOrDelete(x, 'compaction.buffer', v)) }),
+      F.field({
+        label: 'تقليم التاريخ القديم (prune)', type: 'select',
+        value: u.get(d, 'compaction.prune', '') || '',
+        options: [
+          { id: '', label: '— الافتراضي (لا تقليم) —' },
+          { id: 'old', label: 'old — عند كل ضغط' },
+          { id: 'never', label: 'never — تعطيل' }
+        ],
+        desc: 'يحذف أجزاء التاريخ القديم قبل/أثناء الضغط. اختر <code>old</code> لتخفيف النمو دون فقد الإعدادات.',
+        onChange: v => ST.edit(x => u.setOrDelete(x, 'compaction.prune', v))
+      })
+    ], 'c4'));
     c6.body.appendChild(F.hint('الضغط الأصلي من المزوّد يُفتح عبر سياسة إعدادات: <code>providers.&lt;id&gt;.settings.compaction.type = "native"</code>، ويمكن تجاوزه لكل نموذج.'));
     root.appendChild(c6.root);
 
@@ -394,6 +405,13 @@
     const builtin = C.BUILTIN_AGENTS.find(b => b.id === id);
     const mode = a.mode || (builtin ? builtin.mode : 'primary');
 
+    /* Read / Edit mode. By default an agent card is locked — the user clicks
+       «Edit» to enter edit mode. In edit mode every form widget is interactive
+       and the card shows «حفظ» + «تراجع» + dirty indicator. Read-only mode
+       is safer when the user is just inspecting many agents. */
+    let cardMode = 'read';
+    let savedSnapshot = null;
+
     const badges = [
       el('span', { class: 'pill blue', text: mode }),
       a.disabled ? el('span', { class: 'pill red', text: 'معطّل' }) : null,
@@ -402,17 +420,78 @@
       el('span', { class: 'pill ' + sub.kind, text: 'فرعيون: ' + sub.pill })
     ].filter(Boolean);
 
+    const editBtn = F.btn('تحرير', {
+      size: 'sm', kind: 'primary',
+      title: 'افتح حقول التحرير',
+      onClick: e => { e.stopPropagation(); enterEdit(); }
+    });
+    const saveBtn = F.btn('حفظ', {
+      size: 'sm', kind: 'primary',
+      title: 'حفظ التغييرات على الملف',
+      onClick: e => { e.stopPropagation(); saveEdits(); }
+    });
+    const cancelBtn = F.btn('تراجع عن التغييرات', {
+      size: 'sm',
+      title: 'العودة إلى آخر حالة محفوظة',
+      onClick: e => { e.stopPropagation(); cancelEdits(); }
+    });
+    const dirtyChip = el('span', { class: 'pill amber edit-dirty', style: { display: 'none' }, text: 'تغييرات غير محفوظة' });
+
     const it = F.item({
       title: id,
-      badges,
+      badges: [...badges, dirtyChip],
       subtitle: a.description || builtin ? (a.description || (builtin ? builtin.ar : '')) : 'بلا وصف',
       headActions: [
+        editBtn, saveBtn, cancelBtn,
         F.btn('⧉', { size: 'sm', title: 'تكرار', onClick: e => { e.stopPropagation(); duplicateAgent(id); } }),
         F.btn('⇩', { size: 'sm', title: 'تصدير كملف .md', onClick: e => { e.stopPropagation(); exportAgentMd(id); } }),
         F.btn('✕', { size: 'sm', kind: 'danger', title: 'حذف', onClick: e => { e.stopPropagation(); removeAgent(id); } })
       ],
       open: true
     });
+
+    function refreshHeadActions() {
+      editBtn.style.display = cardMode === 'read' ? '' : 'none';
+      saveBtn.style.display = cardMode === 'edit' ? '' : 'none';
+      cancelBtn.style.display = cardMode === 'edit' ? '' : 'none';
+    }
+
+    function enterEdit() {
+      savedSnapshot = u.clone(S.data);
+      cardMode = 'edit';
+      it.body.classList.add('edit-mode');
+      it.body.classList.remove('read-mode');
+      refreshHeadActions();
+    }
+
+    function saveEdits() {
+      savedSnapshot = null;
+      cardMode = 'read';
+      dirtyChip.style.display = 'none';
+      it.body.classList.remove('edit-mode');
+      it.body.classList.add('read-mode');
+      refreshHeadActions();
+      NS.fx.toast('save', 'حُفظت تغييرات الوكيل «' + id + '» على الملف الحالي', 2400);
+    }
+
+    function cancelEdits() {
+      if (savedSnapshot) {
+        ST.edit(x => {
+          Object.keys(S.data).forEach(k => delete S.data[k]);
+          Object.assign(S.data, savedSnapshot);
+        });
+      }
+      savedSnapshot = null;
+      cardMode = 'read';
+      dirtyChip.style.display = 'none';
+      it.body.classList.remove('edit-mode');
+      it.body.classList.add('read-mode');
+      refreshHeadActions();
+      NS.main.render();
+      NS.fx.toast('undo', 'تم التراجع عن التغييرات في الوكيل «' + id + '»', 2000);
+    }
+
+    it.body.classList.add('read-mode');
 
     let tab = 'general';
     const body = it.body;
@@ -425,6 +504,8 @@
         { id: 'model', label: 'النموذج والطلب' }
       ], (t) => { tab = t; renderBody(); }, tab));
 
+      const markDirty = () => { if (cardMode === 'edit') dirtyChip.style.display = ''; };
+
       const ag = () => ST.agents()[id] || (ST.agents()[id] = {});
       const put = (key, val) => ST.edit(x => {
         const node = u.ensure(x, ['agents', id]);
@@ -432,19 +513,21 @@
         if (!Object.keys(node).length) delete x.agents[id];
         if (!Object.keys(x.agents || {}).length) delete x.agents;
       });
+      const putAndMark = (key, val) => { put(key, val); markDirty(); };
 
       if (tab === 'general') {
         body.appendChild(F.grid([
-          F.field({ label: 'الوصف', type: 'text', value: a.description, desc: 'يظهر للنموذج عند اختيار وكيل فرعي — ضروري للوكلاء الفرعيين', onChange: v => put('description', v) }),
+          F.field({ label: 'الوصف', type: 'text', value: a.description, desc: 'يظهر للنموذج عند اختيار وكيل فرعي — ضروري للوكلاء الفرعيين', tip: 'الوصف الذي يراه النموذج عند اختيار وكيل فرعي. <b>ضروري</b> للوكلاء الفرعيين.', onChange: (v) => putAndMark('description', v) }),
           F.field({
             label: 'الوضع (mode)', type: 'select', value: mode, options: C.MODES.map(m => ({ id: m.id, label: m.ar + ' — ' + m.id })),
             desc: C.MODES.find(m => m.id === mode)?.desc,
-            onChange: v => put('mode', v === 'primary' ? undefined : v)
+            tip: '<b>primary</b>: وكيل رئيسي للجلسة. <b>subagent</b>: يعمل فقط عبر جلسة فرعية من أداة task. <b>all</b>: كلاهما.',
+            onChange: v => putAndMark('mode', v === 'primary' ? undefined : v)
           }),
-          F.field({ label: 'اللون', type: 'color', value: a.color, desc: 'ستة أرقام hex', onChange: v => put('color', v) }),
-          F.field({ label: 'أقصى عدد خطوات', type: 'number', min: 1, value: a.steps, desc: 'في الخطوة الأخيرة يزيل OpenCode الأدوات ويطلب ملخصاً نصياً', onChange: v => put('steps', v) }),
-          F.field({ label: 'إخفاء من القوائم', type: 'bool', value: a.hidden === true, desc: 'يزيله من القوائم والاكتشاف وكتالوج الوكلاء الفرعية — تحكّم بالظهور لا بالأمان', onChange: v => put('hidden', v === true ? undefined : true) }),
-          F.field({ label: 'تعطيل الوكيل', type: 'bool', value: a.disabled === true, desc: 'يزيل الوكيل المدمج أو المخصص عند هذه النقطة', onChange: v => put('disabled', v === true ? undefined : true) })
+          F.field({ label: 'اللون', type: 'color', value: a.color, desc: 'ستة أرقام hex', tip: 'لون الوكيل في الواجهة (شريط فتح فوق إعداداته).', onChange: v => putAndMark('color', v) }),
+          F.field({ label: 'أقصى عدد خطوات', type: 'number', min: 1, value: a.steps, desc: 'في الخطوة الأخيرة يزيل OpenCode الأدوات ويطلب ملخصاً نصياً', tip: 'عدد خطوات Tool Loop قبل أن يطلب من الوكيل تلخيص نفسه. التلخيص في الخطوة الأخيرة ليس خطأ.', onChange: v => putAndMark('steps', v) }),
+          F.field({ label: 'إخفاء من القوائم', type: 'bool', value: a.hidden === true, desc: 'يزيله من القوائم والاكتشاف وكتالوج الوكلاء الفرعية — تحكّم بالظهور لا بالأمان', tip: 'تحكّم بالظهور لا بالأمان. الوكيل المخفي لا يظهر للنموذج في القوائم.', onChange: v => putAndMark('hidden', v === true ? undefined : true) }),
+          F.field({ label: 'تعطيل الوكيل', type: 'bool', value: a.disabled === true, desc: 'يزيل الوكيل المدمج أو المخصص عند هذه النقطة', tip: '<code>true</code> يزيل الوكيل نهائياً — لا يمكن للنموذج اختياره.', onChange: v => putAndMark('disabled', v === true ? undefined : true) })
         ], 'c2'));
 
         const sub2 = describeSubagents(a.permissions);
@@ -456,8 +539,9 @@
         body.appendChild(F.field({
           label: 'برومبت النظام (system)', type: 'textarea', rows: 14, value: a.system, mono: true,
           desc: 'قيمة غير فارغة تستبدل برومبت المزوّد الأساسي لهذا الوكيل. تعليمات المشروع والمهارات والمراجع تُضاف إليها.',
+          tip: 'يستبدل برومبت النظام من المزوّد. تعليمات AGENTS.md و skills و references تُضاف فوقه.',
           placeholder: 'راجع التغييرات دون تعديل الملفات. اذكر النتائج مرتبة حسب الخطورة مع مراجع الملف والسطر.',
-          onChange: v => put('system', v)
+          onChange: v => putAndMark('system', v)
         }));
         if (a.system) {
           body.appendChild(el('div', { class: 'md-preview', style: { marginTop: '10px', maxHeight: '220px' }, html: u.mdToHtml(a.system) }));
@@ -470,7 +554,7 @@
           'قواعد الصلاحيات الخاصة بهذا الوكيل <b>تُضاف بعد</b> القواعد العامة، فهي لا تستبدلها. الوكيل الفرعي يستخدم صلاحياته الخاصة لا صلاحيات والده. — حالة إطلاق الوكلاء الفرعية حالياً: <b>' + s2.text + '</b>.'));
         body.appendChild(F.rulesTable({
           value: a.permissions || [], actions: C.PERM_ACTIONS, effects: C.EFFECTS,
-          onChange: v => put('permissions', v),
+          onChange: v => putAndMark('permissions', v),
           presets: [
             { action: 'edit', resource: '*', effect: 'deny' },
             { action: 'subagent', resource: '*', effect: 'deny' },
@@ -487,9 +571,10 @@
             label: 'النموذج', type: 'modelpicker', value: modelVal,
             desc: 'الوكيل الفرعي يستخدم نموذجه المحدد، أو يرث نموذج الجلسة إذا لم يُحدَّد.',
             hint: 'الصيغة الموسّعة <code>{ providerID, model, variant }</code> مدعومة أيضاً في JSON.',
-            onChange: v => put('model', v)
+            tip: 'الوكيل الفرعي يستخدم نموذجه المحدد، أو يرث من الجلسة الرئيسية. الصيغة: <code>provider/model#variant</code>.',
+            onChange: v => putAndMark('model', v)
           }),
-          F.field({ label: 'الصيغة المستخدمة', type: 'select', value: typeof a.model === 'object' ? 'object' : 'string', options: [{ id: 'string', label: 'نص: provider/model#variant' }, { id: 'object', label: 'كائن JSON موسّع' }], emptyValue: 'string', onChange: v => put('model', v === 'object' ? { providerID: '', model: '' } : undefined) })
+          F.field({ label: 'الصيغة المستخدمة', type: 'select', value: typeof a.model === 'object' ? 'object' : 'string', options: [{ id: 'string', label: 'نص: provider/model#variant' }, { id: 'object', label: 'كائن JSON موسّع' }], emptyValue: 'string', onChange: v => putAndMark('model', v === 'object' ? { providerID: '', model: '' } : undefined) })
         ], 'c2'));
 
         body.appendChild(el('div', { class: 'divider' }));
@@ -497,19 +582,20 @@
         body.appendChild(F.sectionNote('تحتفظ جلسات V2 بهذه القيم لكنها <u>لا ترسلها</u> بعد مع طلبات النموذج. اضبط إعدادات الطلب الفعلية على المزوّد أو النموذج أو الـ variant. Legacy fields مثل <code>temperature</code> و <code>prompt</code> و <code>maxSteps</code> ممنوعة في V2.', 'warn'));
         body.appendChild(F.kvEditor({
           value: u.get(a, 'request.headers', {}), keyPlaceholder: 'x-agent', valPlaceholder: 'reviewer',
-          addLabel: 'رأس (header)', onChange: v => put('request.headers', v)
+          addLabel: 'رأس (header)', onChange: v => putAndMark('request.headers', v)
         }));
         body.appendChild(el('div', { style: { height: '10px' } }));
         body.appendChild(el('div', { class: 'field' }, [
           el('label', { text: 'حقول جسم الطلب (body)' }),
           F.typedKV({
             value: u.get(a, 'request.body', {}), addLabel: 'حقل جسم الطلب', keyPlaceholder: 'temperature',
-            emptyText: 'لا توجد حقول في جسم الطلب', onChange: v => put('request.body', v)
+            emptyText: 'لا توجد حقول في جسم الطلب', onChange: v => putAndMark('request.body', v)
           })
         ]));
       }
     };
     renderBody();
+    refreshHeadActions();
     return it;
   }
 
@@ -607,6 +693,11 @@
       ]
     }));
 
+    /* توضيح علوي سريع للمستخدم */
+    root.appendChild(F.sectionNote(
+      '<b>ما الفرق بين هذا القسم وقسم «الوكلاء»؟</b> القواعد هنا تُطبَّق على <b>كل</b> الوكلاء قبل قواعدهم الخاصة. الوكيل الفرعي يستخدم صلاحياته الخاصة لا صلاحيات والده. الفجوة لاتخاذ القرار: <b>قواعد الوكيل تُضاف بعد القواعد العامة، لذا فإن قاعدة عامة «أو منع» لا تستطيع التراجع لصالح قاعدة وكيل «اسماح».</b>',
+      'info'));
+
     root.appendChild(el('div', { class: 'grid c2' }, [
       el('div', { class: 'card' }, [
         el('div', { class: 'card-head' }, el('h3', { text: 'كيف تُطبَّق القواعد' })),
@@ -662,6 +753,7 @@
       label: 'experimental.portable_shell_scanner', type: 'bool',
       value: u.get(d, 'experimental.portable_shell_scanner', false),
       desc: 'يستبدل محلّل tree-sitter القياسي. الأمر الذي لا يستطيع المحلّل تحليله يُعيد خطأ محلّل — ليس رفض صلاحية.',
+      tip: 'يستبدل محلّل tree-sitter بأكثر منه توافقية. أمر لا يمكن تحليله يُعيد خطأ محلّل لا رفض صلاحية.',
       onChange: v => ST.edit(x => u.setOrDelete(x, 'experimental.portable_shell_scanner', v, v === true ? false : true))
     }));
     root.appendChild(c2.root);
@@ -693,6 +785,10 @@
       icon: '🛡', title: 'السياسات (experimental.policies)', doc: DOC.policies, count: pol.length,
       desc: 'السياسات منفصلة عن الصلاحيات: ثنائية (allow/deny)، لا تسأل أبداً، وتُشدّد فقط ما تسمح به الصلاحيات والمزوّدات.'
     }));
+
+    root.appendChild(F.sectionNote(
+      '<b>الفرق بين «الصلاحيات» و«السياسات»:</b> الصلاحيات تسأل عند عدم اليقين وتعرض للمستخدم خيارات (allow/ask/deny). السياسات <b>ثنائية</b> فقط — تنفّذ فوراً دون سؤال. فإذا كتبت سياسة <code>shell:rm * deny</code> لن يسأل حتى لو سمحت الصلاحيات. <b>هذا القسم تجريبي</b> وقد يتغير في V2.',
+      'warn'));
 
     root.appendChild(el('div', { class: 'card' }, [
       el('div', { class: 'card-head' }, el('h3', { text: 'ترتيب الأولوية (يعكس إعدادات OpenCode)' })),

@@ -133,6 +133,74 @@
     setTimeout(() => node.classList.remove('flash-ok', 'flash-warn'), 900);
   }
 
+  /* ---------------- delayed tooltip on hover ----------------
+     Wires a one-second-delayed tooltip to any element that has a
+     [data-tip] attribute. The tooltip follows the pointer and shows
+     either a plain string or an object { html, dir }. Also fires
+     immediately on focus for keyboard users. */
+  let tipLayer = null, tipNode = null, tipTimer = null, tipActive = null;
+  const TIP_DELAY = 1000;
+
+  function ensureTip() {
+    if (tipLayer) return;
+    tipLayer = el('div', { class: 'tip-layer' });
+    tipNode = el('div', { class: 'tip-bubble' });
+    tipLayer.appendChild(tipNode);
+    document.body.appendChild(tipLayer);
+  }
+
+  function showTip(target) {
+    ensureTip();
+    const data = target.dataset.tip;
+    if (!data) return;
+    if (data.indexOf('<') >= 0) {
+      tipNode.innerHTML = data;
+    } else {
+      tipNode.textContent = data;
+    }
+    tipNode.className = 'tip-bubble' + (target.dataset.tipDir ? ' dir-' + target.dataset.tipDir : '');
+    const r = target.getBoundingClientRect();
+    const tw = tipNode.offsetWidth || 240;
+    const left = Math.min(window.innerWidth - tw - 12, Math.max(8, r.left + r.width / 2 - tw / 2));
+    const top = r.bottom + 8;
+    tipNode.style.left = left + 'px';
+    tipNode.style.top = top + 'px';
+    tipLayer.classList.add('on');
+    tipActive = target;
+  }
+
+  function hideTip() {
+    if (tipLayer) tipLayer.classList.remove('on');
+    tipActive = null;
+  }
+
+  function bindTip(target) {
+    let started = false;
+    const start = () => {
+      if (started) return;
+      started = true;
+      tipTimer = setTimeout(() => showTip(target), TIP_DELAY);
+    };
+    const cancel = () => {
+      started = false;
+      clearTimeout(tipTimer); tipTimer = null;
+      if (tipActive === target) hideTip();
+    };
+    target.addEventListener('mouseenter', start);
+    target.addEventListener('mouseleave', cancel);
+    target.addEventListener('focusin', start);
+    target.addEventListener('focusout', cancel);
+    target.addEventListener('mousedown', cancel);
+    window.addEventListener('scroll', cancel, true);
+  }
+
+  /** Walk any subtree and bind tooltips for every [data-tip] node. */
+  function bindTipsIn(root) {
+    ensureTip();
+    const nodes = (root || document).querySelectorAll('[data-tip]');
+    nodes.forEach(n => { if (!n.__tipBound) { n.__tipBound = true; bindTip(n); } });
+  }
+
   /** Briefly swap a button's label — used for copy / toggle confirmations. */
   function swapLabel(btn, text, ms) {
     if (!btn) return;
@@ -162,5 +230,5 @@
     });
   }
 
-  NS.fx = { toast, ok, err, warn, info, saveState, loading, scanNote, flash, swapLabel, skeletonCard, historyToast, flashChip };
+  NS.fx = { toast, ok, err, warn, info, saveState, loading, scanNote, flash, swapLabel, skeletonCard, historyToast, flashChip, bindTipsIn, showTip, hideTip };
 })(window.OCM);

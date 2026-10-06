@@ -51,9 +51,12 @@
         el('span', { text: opts.label }),
         opts.desc ? el('span', { class: 'desc', text: opts.desc }) : null
       ]);
+      if (opts.tip) lab.dataset.tip = opts.tip;
       wrap.appendChild(lab); wrap.appendChild(input);
     } else {
-      wrap.appendChild(el('label', { for: id, text: opts.label }));
+      const lab = el('label', { for: id, text: opts.label });
+      if (opts.tip) lab.dataset.tip = opts.tip;
+      wrap.appendChild(lab);
       if (opts.desc) wrap.appendChild(el('span', { class: 'desc', text: opts.desc }));
       wrap.appendChild(input);
     }
@@ -258,20 +261,63 @@
     const table = el('table', { class: 'tbl' });
     const commit = () => opts.onChange && opts.onChange(u.clone(rules));
 
+    /* Action is now a multi-select: pick one or many of the documented actions.
+       Resource stays a free-text input (paths, command patterns, MCP-tool wildcards).
+       The picker shows each action's Arabic name, English id and short description;
+       existing rule with a custom action is preserved as an "extra" option. */
+    function renderActionPicker(r) {
+      const picker = el('div', { class: 'rt-action' });
+      const currentActions = Array.isArray(r.action) ? r.action.slice() :
+        (r.action == null || r.action === '' ? [] : [String(r.action)]);
+      const allowedIds = actions.map(a => a.id);
+      const extras = currentActions.filter(a => !allowedIds.includes(a));
+      const rebuild = () => {
+        u.clear(picker);
+        const sel = el('select', { class: 'mono', multiple: true, size: Math.min(6, actions.length) });
+        actions.forEach(a => sel.appendChild(el('option', {
+          value: a.id, text: a.id + ' — ' + a.ar + (a.desc ? '  ·  ' + a.desc : '')
+        })));
+        extras.forEach(x => sel.appendChild(el('option', { value: x, text: x + '  ·  (مخصص)' })));
+        sel.value = currentActions.filter(a => allowedIds.includes(a) || extras.includes(a));
+        const info = el('div', { class: 'rt-action-info small dim' });
+        const refreshInfo = () => {
+          u.clear(info);
+          const chosen = Array.from(sel.selectedOptions).map(o => o.value);
+          if (!chosen.length) { info.textContent = '— لم يُختر إجراء —'; return; }
+          info.appendChild(el('span', { text: chosen.map(id => {
+            const a = actions.find(x => x.id === id);
+            return a ? (id + ' (' + a.ar + ')') : id;
+          }).join('، ') }));
+        };
+        sel.addEventListener('change', () => {
+          const chosen = Array.from(sel.selectedOptions).map(o => o.value);
+          r.action = chosen.length === 1 ? chosen[0] : chosen;
+          currentActions.length = 0;
+          currentActions.push(...chosen);
+          commit(); refreshInfo();
+        });
+        picker.appendChild(sel);
+        refreshInfo();
+        picker.appendChild(info);
+      };
+      rebuild();
+      picker.addEventListener('action:reset', rebuild);
+      return picker;
+    }
+
     function render() {
       u.clear(table);
       const thead = el('thead', {}, el('tr', {}, [
         el('th', { style: { width: '34px' }, text: '#' }),
-        el('th', { text: opts.actionLabel || 'الإجراء' }),
+        el('th', { text: opts.actionLabel || 'الإجراء (متعدد الاختيار)' }),
         el('th', { text: opts.resourceLabel || 'المورد' }),
         el('th', { style: { width: '130px' }, text: 'النتيجة' }),
         el('th', { style: { width: '120px' }, text: '' })
       ]));
       const tbody = el('tbody');
       rules.forEach((r, idx) => {
-        const act = el('input', { type: 'text', class: 'mono', value: r.action || '', list: 'oc-actions', placeholder: 'shell' });
-        act.addEventListener('change', () => { r.action = act.value.trim(); commit(); });
-        const res = el('input', { type: 'text', class: 'mono', value: r.resource == null ? '' : String(r.resource), placeholder: '*' });
+        const ap = renderActionPicker(r);
+        const res = el('input', { type: 'text', class: 'mono', value: r.resource == null ? '' : String(r.resource), placeholder: '*', list: 'oc-resources' });
         res.addEventListener('input', u.debounce(() => { r.resource = res.value; commit(); }, 400));
         const eff = el('select', { class: 'eff-' + (effects.indexOf(r.effect) >= 0 ? r.effect : 'ask') });
         effects.forEach(e => eff.appendChild(el('option', { value: e, text: e })));
@@ -280,7 +326,7 @@
 
         tbody.appendChild(el('tr', {}, [
           el('td', { class: 'dim mono', text: String(idx + 1) }),
-          el('td', {}, act),
+          el('td', {}, ap),
           el('td', {}, res),
           el('td', {}, eff),
           el('td', { class: 'actions' }, [
@@ -298,9 +344,11 @@
     }
     render();
 
-    const dl = el('datalist', { id: 'oc-actions' });
-    actions.forEach(a => dl.appendChild(el('option', { value: a.id })));
-    if (!document.getElementById('oc-actions')) document.body.appendChild(dl);
+    /* Datalist for the resource field: built-in patterns + each agent id. */
+    const dl = el('datalist', { id: 'oc-resources' });
+    ['*', '*.env', '*.env.*', '../*', 'subagent:*', 'read:*.ssh/*'].forEach(p =>
+      dl.appendChild(el('option', { value: p })));
+    if (!document.getElementById('oc-resources')) document.body.appendChild(dl);
 
     const box = el('div', {}, [
       wrap,
