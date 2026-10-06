@@ -166,9 +166,9 @@
         {
           label: 'حفظ', kind: 'primary', close: false, onClick: async () => {
             const ok = await fs.ensurePermission(c.rootId);
-            if (!ok) { u.toast('لم يُمنح إذن الكتابة', 'err'); return false; }
+            if (!ok) { u.toast('err', 'لم يُمنح إذن الكتابة'); return false; }
             await fs.writeSafe(c.rootId, path, NS.jsonc.composeFile(data, bodyTa.value));
-            u.closeModal(); u.toast('حُفظ ' + path, 'ok'); NS.main.render();
+            u.closeModal(); u.toast('ok', 'حُفظ ' + path); NS.main.render();
           }
         }
       ]

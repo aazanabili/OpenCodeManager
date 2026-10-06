@@ -164,7 +164,7 @@
 
   async function addRoot(kind) {
     if (!supported()) {
-      u.toast('المتصفح لا يدعم الوصول للقرص. استخدم Chrome أو Edge.', 'warn', 6000);
+      u.toast('warn', 'المتصفح لا يدعم الوصول للقرص. استخدم Chrome أو Edge.', 6000);
       return null;
     }
     let handle;

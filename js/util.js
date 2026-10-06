@@ -168,20 +168,17 @@ window.OCM = window.OCM || {};
   }
 
   /* ---------- toasts ---------- */
-  function toast(msg, kind, ms) {
-    const icons = { ok: '✓', err: '✕', warn: '!', info: 'i' };
-    const box = $('#toasts');
+  // Delegates to the feedback layer so every call site gets the animated design.
+  function toast(kind, msg, ms) {
+    if (NS.fx) return NS.fx.toast(kind, msg, ms);
+    const box = document.getElementById('toasts');
     if (!box) return;
     const t = el('div', { class: 'toast ' + (kind || 'info') }, [
-      el('span', { class: 't-icon', text: icons[kind] || 'i' }),
+      el('span', { class: 't-icon', text: (kind === 'ok' ? '✓' : kind === 'err' ? '✕' : kind === 'warn' ? '!' : 'i') }),
       el('span', { text: msg })
     ]);
     box.appendChild(t);
-    setTimeout(() => {
-      t.style.transition = 'opacity .25s, transform .25s';
-      t.style.opacity = '0'; t.style.transform = 'translateY(8px)';
-      setTimeout(() => t.remove(), 260);
-    }, ms || 3200);
+    setTimeout(() => t.remove(), ms || 3200);
   }
 
   /* ---------- modal ---------- */

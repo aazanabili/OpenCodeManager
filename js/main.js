@@ -93,6 +93,21 @@
     u.clear(box);
     const globalRoot = NS.fs.globalRoot();
     const projects = NS.fs.API.projects || [];
+    const roots = NS.fs.API.roots || [];
+
+    if (!roots.length) {
+      box.appendChild(el('div', { class: 'nav-group-title', text: 'نطاق الإعدادات' }));
+      box.appendChild(el('div', { class: 'side-empty' }, [
+        'لم تُربط أي مجلدات بعد. ',
+        el('b', { text: 'اربط مجلد الإعدادات العامة' }),
+        ' لتبدأ.'
+      ]));
+      box.appendChild(el('div', { class: 'side-actions' }, [
+        F.btn('مجلد عام', { size: 'sm', icon: '🌐', onClick: () => addGlobalRoot() }),
+        F.btn('مجلد مشاريع', { size: 'sm', icon: '📂', onClick: () => addProjectsRoot() })
+      ]));
+      return;
+    }
 
     box.appendChild(el('div', { class: 'nav-group-title', text: 'نطاق الإعدادات' }));
 
@@ -107,11 +122,10 @@
 
     box.appendChild(el('div', { class: 'nav-group-title', text: 'المشاريع (' + projects.length + ')' }));
     if (!projects.length) {
-      box.appendChild(el('div', { class: 'side-empty', text: 'لم يُعثر على مشاريع بعد.' }));
+      box.appendChild(el('div', { class: 'side-empty', text: 'لم يُعثر على مشاريع بعد. أضف مجلد مشاريع أو اضغط فحص.' }));
     }
     projects.forEach(p => {
       const active = S.scope && S.scope.kind === 'project' && S.scope.id === p.id;
-      const dirty = ST.isGlobal() ? false : false;
       box.appendChild(el('button', {
         class: 'nav-item scope-item' + (active ? ' active' : ''),
         title: p.relPath || p.name,
@@ -126,7 +140,7 @@
     box.appendChild(el('div', { class: 'side-actions' }, [
       F.btn('مجلد عام', { size: 'sm', icon: '🌐', onClick: () => addGlobalRoot() }),
       F.btn('مجلد مشاريع', { size: 'sm', icon: '📂', onClick: () => addProjectsRoot() }),
-      F.btn('فحص', { size: 'sm', icon: '⟳', onClick: () => rescan() })
+      F.btn('فحص', { size: 'sm', icon: '⟳', title: 'إعادة فحص المشاريع', onClick: () => rescan(true) })
     ]));
   }
 
@@ -139,31 +153,49 @@
 
   async function openProject(id) {
     const p = NS.fs.projectById(id);
-    if (!p) { u.toast('المشروع غير موجود', 'err'); return; }
+    if (!p) { u.toast('err', 'المشروع غير موجود'); return; }
+
+    // instant feedback: show the target before the disk read finishes
     const scope = { kind: 'project', id: p.id, label: p.name, project: p };
     ST.switchDoc(scope, 'config');
+    render();
+    const fx = NS.fx;
+    fx.scanNote('جارٍ قراءة ' + (p.configFile ? p.relPath + '/' + p.configFile.split('/').pop() : p.name) + '…');
 
     // configFile is relative to the project folder; the root is the projects root
     const path = p.configFile ? NS.fs.join(p.relPath, p.configFile) : null;
 
     if (!path) {
-      u.toast('لا يوجد ملف إعداد في ' + p.name + ' — سيُنشأ عند الحفظ.', 'info', 5000);
-      render();
+      fx.scanNote(null);
+      u.toast('info', 'لا يوجد ملف إعداد في ' + p.name + ' — سيُنشأ عند الحفظ.', 5000);
       return;
     }
     try {
       const okPerm = await NS.fs.ensurePermission(p.rootId);
-      if (!okPerm) { u.toast('لم يُمنح إذن قراءة هذا المجلد', 'err'); return; }
+      if (!okPerm) { fx.scanNote(null); u.toast('err', 'لم يُمنح إذن قراءة هذا المجلد'); return; }
       const text = await NS.fs.readFile(p.rootId, path);
-      if (text == null) { u.toast('تعذّر قراءة ' + path, 'err'); render(); return; }
+      if (text == null) {
+        fx.scanNote(null);
+        u.toast('err', 'تعذّر قراءة ' + path);
+        render();
+        return;
+      }
       try {
         ST.loadText(text, { kind: 'fs', rootId: p.rootId, fileName: path, projectId: p.id });
       } catch (e) {
         ST.loadText('{}', { kind: 'fs', rootId: p.rootId, fileName: path, projectId: p.id });
-        u.toast('الملف غير صالح (' + e.message + ' سطر ' + (e.line || '?') + ') — عدّله ثم احفظ', 'err', 7000);
+        fx.scanNote(null);
+        u.toast('err', 'الملف غير صالح (' + e.message + ' سطر ' + (e.line || '?') + ') — عدّله ثم احفظ', 7000);
+        render();
+        return;
       }
+      fx.scanNote(null);
+      const agents = Object.keys(ST.agents()).length;
+      fx.toast('ok', agents ? agents + ' وكيل · ' + (S.data.permissions || []).length + ' قاعدة صلاحية'
+        : 'لا توجد وكلاء أو صلاحيات في هذا المشروع', 2400);
     } catch (e) {
-      u.toast('خطأ: ' + e.message, 'err');
+      fx.scanNote(null);
+      u.toast('err', 'خطأ: ' + e.message);
     }
     S.globalData = readGlobalSnapshot();
     go('general');
@@ -181,8 +213,8 @@
       const root = await NS.fs.addRoot('global');
       if (!root) return;
       await loadGlobal();
-      u.toast('تم ربط الإعدادات العامة: ' + root.name, 'ok');
-    } catch (e) { u.toast('تعذّر الربط: ' + e.message, 'err'); }
+      u.toast('ok', 'تم ربط الإعدادات العامة: ' + root.name);
+    } catch (e) { u.toast('err', 'تعذّر الربط: ' + e.message); }
     render();
   }
 
@@ -191,8 +223,8 @@
       const root = await NS.fs.addRoot('projects');
       if (!root) return;
       await rescan(true);
-      u.toast('تمت إضافة مجلد المشاريع: ' + root.name, 'ok');
-    } catch (e) { u.toast('تعذّر الربط: ' + e.message, 'err'); }
+      u.toast('ok', 'تمت إضافة مجلد المشاريع: ' + root.name);
+    } catch (e) { u.toast('err', 'تعذّر الربط: ' + e.message); }
     render();
   }
 
@@ -220,9 +252,22 @@
   }
 
   async function rescan(notify) {
-    const list = await NS.fs.scanProjects();
+    const fx = NS.fx;
+    fx.loading(true);
+    const t0 = Date.now();
+    let list;
+    try {
+      list = await NS.fs.scanProjects();
+    } finally {
+      fx.loading(false);
+    }
     S.projects = list;
-    if (notify) u.toast(list.length ? 'عُثر على ' + list.length + ' مشروع' : 'لم يُعثر على مشاريع في المجلدات المضافة', 'info');
+    if (notify) {
+      fx.toast('scan',
+        list.length ? 'عُثر على ' + list.length + ' مشروع في ' + (Date.now() - t0) + ' مللي ثانية'
+          : 'لم يُعثر على مشاريع في المجلدات المضافة',
+        2800);
+    }
     render();
     return list;
   }
@@ -319,13 +364,16 @@
 
   /* ---------------- save ---------------- */
   async function save() {
-    if (!S.loaded) { u.toast('لا يوجد ملف محمّل', 'warn'); return; }
+    if (!S.loaded) { u.toast('warn', 'لا يوجد ملف محمّل'); return; }
     if (!S.origin || S.origin.kind !== 'fs' || !S.origin.rootId) {
       doExport();
       return;
     }
+    const fx = NS.fx;
+    fx.saveState('saving');
     const ok = await NS.fs.ensurePermission(S.origin.rootId);
-    if (!ok) { u.toast('لم يُمنح إذن الكتابة', 'err'); return; }
+    if (!ok) { fx.saveState('idle'); u.toast('err', 'لم يُمنح إذن الكتابة'); return; }
+
     const path = S.origin.fileName;
     try {
       const prev = await NS.fs.readFile(S.origin.rootId, path);
@@ -333,19 +381,25 @@
       await NS.fs.writeSafe(S.origin.rootId, path, ST.serialize());
       ST.markSaved();
       if (ST.isGlobal()) S.globalData = null; else S.globalData = readGlobalSnapshot();
-      u.toast('حُفظ إلى ' + path + (ST.isGlobal() ? ' (عام)' : ' — داخل المشروع فقط'), 'ok');
+
+      fx.saveState('saved');
+      fx.toast('save', ST.isGlobal()
+        ? 'الإعدادات العامة — تسري على كل المشاريع'
+        : 'داخل هذا المشروع فقط', 2600);
+      setTimeout(() => fx.saveState('idle'), 1700);
     } catch (e) {
-      u.toast('فشل الحفظ: ' + e.message, 'err');
+      fx.saveState('idle');
+      fx.toast('err', 'فشل الحفظ: ' + e.message, 6000);
     }
     render();
   }
 
   /* ---------------- export ---------------- */
   function doExport() {
-    if (!S.loaded) { u.toast('لا يوجد ملف', 'warn'); return; }
+    if (!S.loaded) { u.toast('warn', 'لا يوجد ملف'); return; }
     const name = (S.origin && S.origin.fileName) || (S.target === 'cli' ? 'cli.json' : 'opencode.json');
     u.download(name, ST.serialize(), 'application/json;charset=utf-8');
-    u.toast('نُزّل ' + name, 'ok');
+    u.toast('ok', 'نُزّل ' + name);
   }
 
   /* ---------------- bind ---------------- */
@@ -356,8 +410,8 @@
     $('#btnImport2').addEventListener('click', addGlobalRoot);
     $('#btnExport').addEventListener('click', doExport);
     $('#btnSave').addEventListener('click', save);
-    $('#btnUndo').addEventListener('click', () => { ST.undo(); render(); });
-    $('#btnRedo').addEventListener('click', () => { ST.redo(); render(); });
+    $('#btnUndo').addEventListener('click', () => { if (ST.undo()) { NS.fx.historyToast('undo'); render(); } });
+    $('#btnRedo').addEventListener('click', () => { if (ST.redo()) { NS.fx.historyToast('redo'); render(); } });
     $('#navSearch').addEventListener('input', u.debounce(() => buildNav($('#navSearch').value), 150));
     $('#modalClose').addEventListener('click', u.closeModal);
     $('#modalBackdrop').addEventListener('mousedown', (e) => { if (e.target.id === 'modalBackdrop') u.closeModal(); });
@@ -375,8 +429,18 @@
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
-      else if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { if (typing) return; e.preventDefault(); ST.undo(); render(); }
-      else if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { if (typing) return; e.preventDefault(); ST.redo(); render(); }
+      else if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        if (typing) return;
+        e.preventDefault();
+        if (ST.undo()) NS.fx.historyToast('undo');
+        render();
+      }
+      else if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
+        if (typing) return;
+        e.preventDefault();
+        if (ST.redo()) NS.fx.historyToast('redo');
+        render();
+      }
       else if (e.key === 'Escape' && !$('#modalBackdrop').hidden) u.closeModal();
     });
 
@@ -400,7 +464,7 @@
     if (restored) {
       const need = NS.fs.needsPermission();
       if (need.length) {
-        u.toast('بقي بحاجة إلى إذن لـ ' + need.length + ' مجلد — اضغط «فتح مجلد» للسماح.', 'warn', 8000);
+        u.toast('warn', 'بقي بحاجة إلى إذن لـ ' + need.length + ' مجلد — اضغط «فتح مجلد» للسماح.', 8000);
       }
       await loadGlobal();
       await rescan(false);

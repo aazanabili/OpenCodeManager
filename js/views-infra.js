@@ -322,7 +322,7 @@ opencode mcp logout sentry`) }));
         {
           label: 'إنشاء', kind: 'primary', close: false, onClick: () => {
             const n = name.value.trim();
-            if (!n) { u.toast('أدخل اسماً', 'err'); return false; }
+            if (!n) { u.toast('err', 'أدخل اسماً'); return false; }
             ST.edit(x => {
               const node = u.ensure(x, ['mcp', 'servers', n]);
               u.setOrDelete(node, 'type', type.value);
@@ -581,7 +581,7 @@ opencode mcp logout sentry`) }));
         {
           label: 'إنشاء', kind: 'primary', close: false, onClick: () => {
             const n = id.value.trim();
-            if (!n) { u.toast('أدخل معرّفاً', 'err'); return false; }
+            if (!n) { u.toast('err', 'أدخل معرّفاً'); return false; }
             ST.edit(x => {
               const node = u.ensure(x, ['providers', n]);
               if (!u.isObj(node.models)) node.models = {};

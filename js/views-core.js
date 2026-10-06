@@ -530,8 +530,8 @@
         {
           label: 'إنشاء', kind: 'primary', close: false, onClick: () => {
             const id = u.slug(nameIn.value);
-            if (!id) { u.toast('أدخل معرّفاً صالحاً', 'err'); return false; }
-            if (ST.agents()[id]) { u.toast('المعرّف مستخدم بالفعل', 'err'); return false; }
+            if (!id) { u.toast('err', 'أدخل معرّفاً صالحاً'); return false; }
+            if (ST.agents()[id]) { u.toast('err', 'المعرّف مستخدم بالفعل'); return false; }
             ST.edit(x => {
               u.set(x, ['agents', id], { description: descIn.value.trim() || undefined, mode: modeIn.value });
               u.setOrDelete(x, ['agents', id, 'description'], descIn.value.trim());
@@ -539,7 +539,7 @@
             });
             u.closeModal();
             NS.main.render();
-            u.toast('أُنشئ الوكيل ' + id, 'ok');
+            u.toast('ok', 'أُنشئ الوكيل ' + id);
           }
         }
       ]
@@ -552,7 +552,7 @@
     while (ST.agents()[nid]) { nid = id + '-copy' + i; i++; }
     ST.edit(x => x.agents[nid] = copy);
     NS.main.render();
-    u.toast('نُسخ إلى ' + nid, 'ok');
+    u.toast('ok', 'نُسخ إلى ' + nid);
   }
 
   async function removeAgent(id) {

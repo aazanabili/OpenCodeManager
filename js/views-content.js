@@ -175,9 +175,9 @@ metadata:
         {
           label: 'إنشاء', kind: 'primary', close: false, onClick: () => {
             const n = u.slug(name.value);
-            if (!n) { u.toast('اسم غير صالح', 'err'); return false; }
+            if (!n) { u.toast('err', 'اسم غير صالح'); return false; }
             ST.edit(x => u.set(x, ['commands', n], { template: tpl.value }));
-            u.closeModal(); NS.main.render(); u.toast('أُنشئ الأمر /' + n, 'ok');
+            u.closeModal(); NS.main.render(); u.toast('ok', 'أُنشئ الأمر /' + n);
           }
         }
       ]
@@ -301,7 +301,7 @@ opencode plugin remove opencode-acme-plugin@1.2.0`) }));
         {
           label: 'إضافة', kind: 'primary', close: false, onClick: () => {
             const v = pkg.value.trim();
-            if (!v) { u.toast('أدخل اسم حزمة أو مساراً', 'err'); return false; }
+            if (!v) { u.toast('err', 'أدخل اسم حزمة أو مساراً'); return false; }
             ST.edit(x => u.set(x, 'plugins', (x.plugins || []).concat([v])));
             u.closeModal(); NS.main.render();
           }
@@ -438,7 +438,7 @@ opencode plugin remove opencode-acme-plugin@1.2.0`) }));
       F.btn('إضافة', {
         kind: 'primary', onClick: () => {
           const n = u.slug(nm.value);
-          if (!n) { u.toast('أدخل اسماً', 'err'); return; }
+          if (!n) { u.toast('err', 'أدخل اسماً'); return; }
           const command = cm.value.trim() ? cm.value.trim().split(/\s+/) : [];
           const extensions = ex.value.trim() ? ex.value.trim().split(/[\s,]+/) : [];
           ST.edit(x => {
@@ -577,7 +577,7 @@ opencode plugin remove opencode-acme-plugin@1.2.0`) }));
     const editTheme = (name, mode) => {
       ST.switchDoc(ST.S.scope, 'cli');
       ST.edit(x => { x.theme = { name, mode }; });
-      u.toast('حُدّث الثيم — احفظ بـ Ctrl+S', 'ok');
+      u.toast('ok', 'حُدّث الثيم — احفظ بـ Ctrl+S');
       NS.main.go('cli-appearance');
     };
 
@@ -749,10 +749,10 @@ opencode plugin remove opencode-acme-plugin@1.2.0`) }));
           kind: 'primary', onClick: async () => {
             try {
               const ok = await fs.ensurePermission(c.rootId);
-              if (!ok) { u.toast('لم يُمنح إذن الكتابة', 'err'); return; }
+              if (!ok) { u.toast('err', 'لم يُمنح إذن الكتابة'); return; }
               await fs.writeSafe(c.rootId, path, ta.value);
-              u.toast('حُفظ ' + path, 'ok');
-            } catch (e) { u.toast('خطأ: ' + e.message, 'err'); }
+              u.toast('ok', 'حُفظ ' + path);
+            } catch (e) { u.toast('err', 'خطأ: ' + e.message); }
           }
         })
       ]));
