@@ -1,0 +1,121 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "anthropic/claude-sonnet-4-5",
+  "default_agent": "build",
+  "shell": "/bin/zsh",
+  "username": "your-name",
+  "update": "notify",
+
+  // Ordered rules; the last matching rule wins.
+  "permissions": [
+    { "action": "shell", "resource": "*", "effect": "ask" },
+    { "action": "shell", "resource": "git status *", "effect": "allow" },
+    { "action": "shell", "resource": "git diff *", "effect": "allow" },
+    { "action": "shell", "resource": "git push *", "effect": "deny" },
+    { "action": "edit", "resource": "*.env", "effect": "deny" },
+  ],
+
+  "experimental": {
+    "policies": [
+      { "action": "provider.use", "resource": "*", "effect": "deny" },
+      { "action": "provider.use", "resource": "anthropic", "effect": "allow" },
+      { "action": "permission", "resource": "shell:sudo *", "effect": "deny" },
+    ],
+    "portable_shell_scanner": true,
+  },
+
+  "agents": {
+    "reviewer": {
+      "description": "Reviews changes without editing files",
+      "mode": "subagent",
+      "model": "anthropic/claude-sonnet-4-5#high",
+      "system": "Review only. Do not modify files. Report findings in severity order.",
+      "steps": 8,
+      "color": "#ff6b6b",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "subagent", "resource": "*", "effect": "deny" },
+      ],
+    },
+    "orchestrator": {
+      "description": "Coordinates a fixed roster of subagents",
+      "mode": "primary",
+      "permissions": [
+        { "action": "subagent", "resource": "*", "effect": "deny" },
+        { "action": "subagent", "resource": "reviewer", "effect": "allow" },
+      ],
+    },
+  },
+
+  "mcp": {
+    "timeout": { "startup": 45000, "catalog": 30000 },
+    "servers": {
+      "context7": {
+        "type": "remote",
+        "url": "https://mcp.context7.com/mcp",
+        "codemode": false,
+      },
+      "everything": {
+        "type": "local",
+        "command": ["npx", "-y", "@modelcontextprotocol/server-everything"],
+        "environment": { "LOG_LEVEL": "info" },
+      },
+      "sentry": {
+        "type": "remote",
+        "url": "https://mcp.sentry.dev/mcp",
+        "protocol": "auto",
+        "disabled": true,
+      },
+    },
+  },
+
+  "skills": ["./team-skills", "https://example.com/.well-known/skills/"],
+
+  "commands": {
+    "review": {
+      "description": "Review code",
+      "template": "Review $ARGUMENTS for correctness and missing tests.",
+      "agent": "plan",
+    },
+  },
+
+  "plugins": ["opencode-acme-plugin", "./plugins/local"],
+
+  "formatter": {
+    "prettier": { "extensions": [".md", ".mdx"] },
+    "deno-markdown": { "command": ["deno", "fmt", "$FILE"], "extensions": [".md"] },
+  },
+
+  "references": {
+    "docs": { "path": "../product-docs", "description": "Product behavior and terminology" },
+    "effect": { "repository": "Effect-TS/effect", "branch": "main" },
+  },
+
+  "instructions": ["CONTRIBUTING.md"],
+
+  "websearch": { "provider": "random" },
+  "compaction": { "auto": true, "keep": { "tokens": 15000 }, "buffer": 20000 },
+  "warming": { "prompt": "Reply with exactly: OK", "interval": "4 minutes", "duration": "30 minutes" },
+  "worktree": { "directory": ".lane/trees" },
+
+  "snapshots": true,
+  "watcher": { "ignore": ["dist/**", "coverage/**"] },
+  "tool_output": { "max_lines": 2000, "max_bytes": 51200 },
+  "media": { "image": { "auto_resize": true, "max_width": 2000, "max_height": 2000, "max_base64_bytes": 5242880 } },
+
+  "providers": {
+    "acme": {
+      "name": "Acme",
+      "env": ["ACME_API_KEY"],
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": { "baseURL": "https://llm.acme.example/v1" },
+      "models": {
+        "qwen3-coder": {
+          "name": "Qwen 3 Coder",
+          "limit": { "context": 200000, "output": 32000 },
+          "variants": [{ "id": "fast", "body": { "service_tier": "flex" } }],
+        },
+      },
+    },
+  },
+}

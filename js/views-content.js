@@ -1,0 +1,802 @@
+/* ============================================================
+   views-content.js — Skills · Commands · Plugins · Formatters
+                       · Themes · References · Instructions
+   ============================================================ */
+(function (NS) {
+  'use strict';
+
+  const u = NS.u, F = NS.F, C = NS.C, ST = NS.store, S = ST.S;
+  const { el } = u;
+
+  const H = () => NS.helpers;
+
+  /* ===============================================================
+     SKILLS
+     =============================================================== */
+  function viewSkills(root) {
+    const d = S.data;
+    root.appendChild(F.pageHead({
+      icon: '🧩', title: 'المهارات (Skills)', doc: 'skills',
+      count: (d.skills || []).length,
+      desc: 'المهارة تعليمات قابلة لإعادة الاستخدام لمهمة محددة. ينشرها OpenCode للنموذج حسب صلاحيتها، ثم يحمّلها النموذج بأداة <code>skill</code> عند الحاجة.',
+      actions: [F.btn('تحديث', { icon: '⟳', onClick: () => NS.main.render() })]
+    }));
+
+    const c0 = F.card({ title: 'مصادر المهارات الإضافية', desc: 'مجلدات محلية أو كتالوجات HTTP. تُدمج كل المصفوفات <code>skills</code> ولا تستبدل بعضها.' });
+    c0.body.appendChild(F.listEditor({
+      items: d.skills || [], placeholder: './team-skills  أو  https://example.com/opencode/skills/', addLabel: 'إضافة مصدر',
+      emptyText: 'لا توجد مصادر إضافية — يعمل الاكتشاف التلقائي فقط',
+      hint: 'المسار النسبي يُحل من مجلد عمل OpenCode النشط لا من ملف الإعداد · <code>~/</code> من مجلد المستخدم · المسار المطلق كما هو · <code>http(s)://</code> كتالوج يحتوي <code>index.json</code>.',
+      onChange: v => ST.edit(x => u.setOrDelete(x, 'skills', v))
+    }));
+    root.appendChild(c0.root);
+
+    const c1 = F.card({
+      title: 'ملفات المهارات',
+      desc: 'كل مصدر يدعم <code>&lt;source&gt;/&lt;id&gt;/SKILL.md</code> أو <code>&lt;source&gt;/&lt;id&gt;.md</code>. المعرّف يأتي من المسار وليس من حقل <code>name</code>.'
+    });
+    const box = el('div', {});
+    c1.body.appendChild(el('div', { class: 'info-box', html: 'الاكتشاف التلقائي: <code>~/.config/opencode/skills</code> · <code>~/.claude/skills</code> · <code>~/.agents/skills</code> · <code>.opencode/skills</code> · <code>.claude/skills</code> · <code>.agents/skills</code>.' }));
+    c1.body.appendChild(box);
+    root.appendChild(c1.root);
+    renderSkillFiles(box);
+
+    const c2 = F.card({ title: 'مرجع', desc: 'كيف تُكتب المهارة' });
+    c2.body.appendChild(F.hint('<code>name</code>: اسم العرض · <code>description</code>: ما يُعرض للنموذج · <code>metadata.opencode/autoinvoke: false</code>: إخفاء المهارة من قائمة النموذج (تبقى محمّلة بالـ ID) · <code>disable-model-invocation: true</code>: نفس التأثير.'));
+    c2.body.appendChild(el('pre', { class: 'snippet', html: u.esc(`---
+name: Git Release
+description: Prepare release notes, version bumps, and GitHub releases
+metadata:
+  opencode/autoinvoke: false
+---
+
+## Workflow
+
+1. Read \`references/release-policy.md\`.
+2. Summarize merged changes since the previous tag.
+3. Run \`scripts/changelog.ts\` only after approval.`) }));
+    c2.body.appendChild(F.hint('الملفات الداعمة لا تُحمّل تلقائياً — ضعها بجانب ملف SKILL.md لتصبح مساراتها مرئية للوكيل.'));
+    root.appendChild(c2.root);
+  }
+
+  async function renderSkillFiles(box) {
+    u.clear(box);
+    const fs = NS.fs;
+    if (!fs.API.handle) {
+      box.appendChild(el('div', { class: 'empty', text: 'اربط مجلداً لعرض ملفات المهارات وتحريرها.' }));
+      return;
+    }
+    const scope = await fs.detect();
+    const dir = scope.skillsDir;
+    if (!dir) { box.appendChild(el('div', { class: 'empty', text: 'لا يوجد مجلد skills/ في المجلد المحدد.' })); return; }
+    const files = (await fs.walk(dir, 6)).filter(f => /\.(md)$/i.test(f));
+    if (!files.length) box.appendChild(el('div', { class: 'empty', text: 'لا توجد ملفات مهارات في ' + dir }));
+    files.forEach(f => {
+      const id = skillIdFromPath(f, dir);
+      box.appendChild(el('div', { class: 'list-row', style: { padding: '7px 0', borderBottom: '1px solid var(--border)' } }, [
+        el('span', { class: 'pill mono blue', text: id }),
+        el('span', { class: 'small dim', text: f.replace(dir + '/', '') }),
+        el('div', { class: 'spacer' }),
+        F.btn('تحرير', { size: 'sm', onClick: () => H().editMdFile(f, 'مهارة') }),
+        F.btn('حذف', { size: 'sm', kind: 'danger', onClick: async () => { await fs.remove(f); NS.main.render(); } })
+      ]));
+    });
+    box.appendChild(el('div', { class: 'flex', style: { marginTop: '12px' } }, [
+      F.btn('مهارة جديدة', { kind: 'primary', icon: '+', onClick: async () => {
+        const name = await u.promptBox('مهارة جديدة', 'معرّف المهارة (kebab-case، مطابق لاسم المجلد)', 'my-skill');
+        if (!name) return;
+        const id = u.slug(name);
+        await fs.write(dir + '/' + id + '/SKILL.md', NS.jsonc.composeFile({ name: id, description: '' }, 'Describe what this skill does and when to use it.\n'));
+        NS.main.render();
+      } })
+    ]));
+  }
+
+  function skillIdFromPath(full, dir) {
+    let rel = full.slice(dir.length + 1);
+    if (rel.endsWith('/SKILL.md')) return rel.slice(0, -'/SKILL.md'.length);
+    rel = rel.replace(/\.md$/i, '');
+    return rel.includes('/') ? rel.split('/').pop() : rel;
+  }
+
+  /* ===============================================================
+     COMMANDS
+     =============================================================== */
+  function viewCommands(root) {
+    const d = S.data;
+    const cmds = u.isObj(d.commands) ? d.commands : {};
+    const names = Object.keys(cmds);
+    root.appendChild(F.pageHead({
+      icon: '⚡', title: 'الأوامر (Commands)', doc: 'commands', count: names.length,
+      desc: 'أوامر تبدأ بشرطة مائلة تتحول إلى برومبت. تُعرَّف إما في <code>commands</code> داخل الإعداد أو كملفات <code>commands/*.md</code>.',
+      actions: [F.btn('أمر جديد', { kind: 'primary', icon: '+', onClick: () => newCommand() })]
+    }));
+
+    if (!names.length) root.appendChild(el('div', { class: 'empty', text: 'لا توجد أوامر في هذا الملف.' }));
+
+    const wrap = el('div', { class: 'items' });
+    names.forEach(name => {
+      const c = cmds[name] || {};
+      const it = F.item({
+        title: name, open: true,
+        badges: [
+          c.agent ? el('span', { class: 'pill blue', text: 'agent: ' + c.agent }) : null,
+          c.model ? el('span', { class: 'pill mono', text: '🤖 ' + c.model }) : null,
+          c.subagent === true ? el('span', { class: 'pill purple', text: 'فرعي' }) : null,
+          c.subtask !== undefined && c.subagent === undefined ? el('span', { class: 'pill amber', text: 'subtask (مهمل)' }) : null
+        ].filter(Boolean),
+        subtitle: c.description || c.template || '',
+        headActions: [
+          F.btn('⇩', { size: 'sm', title: 'تصدير كملف .md', onClick: e => { e.stopPropagation(); exportCommandMd(name); } }),
+          F.btn('✕', { size: 'sm', kind: 'danger', onClick: async e => {
+            e.stopPropagation();
+            if (await u.confirmBox('حذف الأمر', 'سيُحذف الأمر «' + name + '»', 'حذف')) {
+              ST.edit(x => { if (x.commands) delete x.commands[name]; if (x.commands && !Object.keys(x.commands).length) delete x.commands; });
+              NS.main.render();
+            }
+          } })
+        ]
+      });
+      const b = it.body;
+      b.appendChild(F.grid([
+        F.field({ label: 'الوصف', value: c.description, onChange: v => putCmd(name, 'description', v) }),
+        F.field({ label: 'الوكيل (agent)', type: 'agent', value: c.agent, onChange: v => putCmd(name, 'agent', v) }),
+        F.field({ label: 'النموذج (model)', type: 'model', value: c.model, onChange: v => putCmd(name, 'model', v) }),
+        F.field({ label: 'تشغيل في جلسة فرعية', type: 'bool', value: c.subagent === true, desc: 'true دائماً جلسة فرعية · false دائماً الجلسة الحالية · مُهمَل: جلسة فرعية فقط إذا كان الوكيل subagent', onChange: v => putCmd(name, 'subagent', v === true ? undefined : true) })
+      ], 'c2'));
+      b.appendChild(F.field({
+        label: 'القالب (template)', type: 'textarea', rows: 6, value: c.template, mono: true, required: true,
+        hint: '<code>$ARGUMENTS</code> = كامل الوسائط · <code>$1</code> و <code>$2</code> = وسائط موضعية · <code>!`command`</code> يُدرج مخرجات الصدفة قبل الإرسال.',
+        onChange: v => putCmd(name, 'template', v)
+      }));
+      wrap.appendChild(it);
+    });
+    root.appendChild(wrap);
+
+    const c1 = F.card({ title: 'أوامر من ملفات', desc: 'ملفات .md في <code>commands/</code> أو <code>.opencode/commands/</code>. المسار المتداخل يصبح <code>/team/review</code>.' });
+    const box = el('div', {});
+    c1.body.appendChild(box);
+    root.appendChild(c1.root);
+    renderCommandFiles(box);
+
+    const c2 = F.card({ title: 'مرجع سريع', desc: 'أنماط الوسائط الموضعية والتوسيع' });
+    c2.body.appendChild(el('div', { class: 'grid c2' }, [
+      el('div', {}, [el('h4', { class: 'small', text: 'المواضع' }), el('pre', { class: 'snippet', html: u.esc(`/check src/auth.ts "error handling"
+  → $1 = src/auth.ts   $2 = error handling
+
+/check compare api stable branch
+  → Check $1 with $2.   →   Compare api with stable branch.`) })]),
+      el('div', {}, [
+        el('h4', { class: 'small', text: 'كتل الصدفة' }),
+        el('pre', { class: 'snippet', html: u.esc(`Review this diff:
+
+!\`git diff --stat && git diff\``) }),
+        el('p', { class: 'small dim', style: { marginTop: '8px' } }, 'كتل الصدفة تعمل عند تقييم الأمر خارج تدفق صلاحيات الأدوات. لا تضع وسائط غير موثوقة داخلها.'),
+        el('p', { class: 'small dim' }, 'إذا لم يحتوِ القالب على أي عنصر نائب، تُلحق الوسائط غير الفارغة بعد سطر فارغ.')
+      ])
+    ]));
+    root.appendChild(c2.root);
+  }
+
+  function putCmd(name, key, val) {
+    ST.edit(x => {
+      const node = u.ensure(x, ['commands', name]);
+      u.setOrDelete(node, key, val);
+      if (!Object.keys(node).length) delete x.commands[name];
+    });
+  }
+
+  function newCommand() {
+    const name = u.el('input', { type: 'text', class: 'mono', placeholder: 'review', dir: 'ltr' });
+    const tpl = u.el('textarea', { rows: 4, class: 'mono', dir: 'ltr' });
+    tpl.value = 'Review $ARGUMENTS for bugs and missing tests.';
+    u.modal({
+      title: 'أمر جديد',
+      body: el('div', { class: 'grid' }, [
+        el('div', { class: 'field' }, [el('label', { text: 'اسم الأمر' }), name]),
+        el('div', { class: 'field' }, [el('label', { text: 'القالب' }), tpl])
+      ]),
+      buttons: [
+        { label: 'إلغاء', kind: 'ghost' },
+        {
+          label: 'إنشاء', kind: 'primary', close: false, onClick: () => {
+            const n = u.slug(name.value);
+            if (!n) { u.toast('اسم غير صالح', 'err'); return false; }
+            ST.edit(x => u.set(x, ['commands', n], { template: tpl.value }));
+            u.closeModal(); NS.main.render(); u.toast('أُنشئ الأمر /' + n, 'ok');
+          }
+        }
+      ]
+    });
+  }
+
+  function exportCommandMd(name) {
+    const c = (S.data.commands || {})[name] || {};
+    const fm = {};
+    ['description', 'agent', 'model', 'subagent'].forEach(k => { if (c[k] !== undefined) fm[k] = c[k]; });
+    u.download(name + '.md', NS.jsonc.composeFile(fm, c.template || ''), 'text/markdown;charset=utf-8');
+  }
+
+  async function renderCommandFiles(box) {
+    u.clear(box);
+    const fs = NS.fs;
+    if (!fs.API.handle) { box.appendChild(el('div', { class: 'empty', text: 'اربط مجلداً لعرض ملفات الأوامر.' })); return; }
+    const scope = await fs.detect();
+    const dir = scope.commandsDir;
+    if (!dir) { box.appendChild(el('div', { class: 'empty', text: 'لا يوجد مجلد commands/ في المجلد المحدد.' })); return; }
+    const files = (await fs.walk(dir, 5)).filter(f => /\.md$/i.test(f));
+    if (!files.length) box.appendChild(el('div', { class: 'empty', text: 'لا توجد ملفات أوامر في ' + dir }));
+    files.forEach(f => {
+      box.appendChild(el('div', { class: 'list-row', style: { padding: '7px 0', borderBottom: '1px solid var(--border)' } }, [
+        el('span', { class: 'pill mono blue', text: '/' + f.slice(dir.length + 1).replace(/\.md$/i, '') }),
+        el('span', { class: 'small dim', text: f }),
+        el('div', { class: 'spacer' }),
+        F.btn('تحرير', { size: 'sm', onClick: () => H().editMdFile(f, 'أمر') }),
+        F.btn('حذف', { size: 'sm', kind: 'danger', onClick: async () => { await fs.remove(f); NS.main.render(); } })
+      ]));
+    });
+    box.appendChild(el('div', { class: 'flex', style: { marginTop: '12px' } }, [
+      F.btn('أمر ملف جديد', { kind: 'primary', icon: '+', onClick: async () => {
+        const name = await u.promptBox('أمر ملف جديد', 'اسم الملف (بدون .md، يمكن استخدام team/review)', 'review');
+        if (!name) return;
+        await fs.write(dir + '/' + u.slug(name) + '.md', 'Review $ARGUMENTS for bugs and missing tests.\n');
+        NS.main.render();
+      } })
+    ]));
+  }
+
+  /* ===============================================================
+     PLUGINS
+     =============================================================== */
+  function viewPlugins(root) {
+    const d = S.data;
+    const list = Array.isArray(d.plugins) ? d.plugins : [];
+    root.appendChild(F.pageHead({
+      icon: '🧱', title: 'الإضافات (Plugins)', doc: 'plugins', count: list.length,
+      desc: 'حزم منشورة أو مسارات محلية. تُعالَج بالترتيب، وتُطبَّق مصفوفات الإضافات من أولوية أقل إلى أعلى بدل الاستبدال.',
+      actions: [
+        F.btn('إضافة', { kind: 'primary', icon: '+', onClick: () => addPlugin() }),
+        F.btn('تحديث', { icon: '⟳', onClick: () => NS.main.render() })
+      ]
+    }));
+
+    root.appendChild(F.sectionNote('التحكم: بادئة <code>-</code> تعطّل معرّفاً أو نمطاً، و <code>*</code> تطابق كل إضافة، و <code>.*</code> تطابق بادئة معرّف. معرّف لاحق يعيد التفعيل. الإضافتان <code>opencode.config.policy</code> و <code>opencode.provider.opencode</code> تتجاهلان الإزالة.'));
+
+    if (!list.length) root.appendChild(el('div', { class: 'empty', text: 'لا توجد إضافات مهيّأة في هذا الملف.' }));
+
+    const wrap = el('div', { class: 'items' });
+    list.forEach((entry, idx) => {
+      const isObj = u.isObj(entry);
+      const pkg = isObj ? entry.package : entry;
+      const opts = isObj ? entry.options : null;
+      const disabled = String(pkg || '').startsWith('-');
+      const it = F.item({
+        title: pkg, disabled,
+        badges: [
+          disabled ? el('span', { class: 'pill red', text: 'معطّلة' }) : el('span', { class: 'pill green', text: 'مفعّلة' }),
+          isObj ? el('span', { class: 'pill purple', text: 'مع خيارات' }) : el('span', { class: 'pill', text: 'نص' }),
+          /^\*/.test(pkg) ? el('span', { class: 'pill amber', text: 'نمط' }) : null
+        ].filter(Boolean),
+        headActions: [
+          F.btn('↑', { size: 'sm', onClick: e => { e.stopPropagation(); move(idx, -1); } }),
+          F.btn('↓', { size: 'sm', onClick: e => { e.stopPropagation(); move(idx, 1); } }),
+          F.btn(disabled ? 'تفعيل' : 'تعطيل', { size: 'sm', onClick: e => { e.stopPropagation(); toggle(idx); } }),
+          F.btn('✕', { size: 'sm', kind: 'danger', onClick: e => { e.stopPropagation(); remove(idx); } })
+        ],
+        open: !isObj
+      });
+      if (isObj) {
+        it.body.appendChild(F.grid([
+          F.field({
+            label: 'package', value: entry.package, dir: 'ltr',
+            hint: 'اسم حزمة، أو إصدار <code>name@1.2.0</code>، أو نطاق، أو مسار نسبي <code>./plugins/local</code>، أو <code>file:///abs/path</code>.',
+            onChange: v => { ST.edit(x => { x.plugins[idx] = Object.assign({}, x.plugins[idx], { package: v }); }); }
+          })
+        ], 'c1'));
+        it.body.appendChild(F.field({
+          label: 'options', type: 'json', rows: 5, value: opts,
+          onChange: v => ST.edit(x => {
+            if (v === undefined) { if (x.plugins[idx] && typeof x.plugins[idx] === 'object') delete x.plugins[idx].options; }
+            else x.plugins[idx] = Object.assign({}, x.plugins[idx], { options: v });
+          })
+        }));
+        it.body.appendChild(el('div', { class: 'flex', style: { marginTop: '10px' } }, [
+          F.btn('تحويل إلى نص', { size: 'sm', onClick: () => ST.edit(x => { x.plugins[idx] = x.plugins[idx].package; }) })
+        ]));
+      }
+      wrap.appendChild(it);
+    });
+    root.appendChild(wrap);
+
+    const c = F.card({ title: 'أدوات CLI', desc: 'الإضافات الخاصة بالطرفية تُضبط في <code>cli.json</code> وتبقى فعّالة عند الاتصال بسيرفر بعيد.' });
+    c.body.appendChild(F.btn('فتح قسم إعدادات الطرفية', { onClick: () => { ST.setTarget('cli'); NS.main.go('cli-plugins'); } }));
+    root.appendChild(c.root);
+
+    const c2 = F.card({ title: 'إدارة من الطرفية', desc: 'أوامر opencode' });
+    c2.body.appendChild(el('pre', { class: 'snippet', html: u.esc(`opencode plugin add opencode-acme-plugin@1.2.0
+opencode plugin list
+opencode plugin list --builtin
+opencode plugin check
+opencode plugin update
+opencode plugin update opencode-acme-plugin
+opencode plugin remove opencode-acme-plugin@1.2.0`) }));
+    root.appendChild(c2.root);
+  }
+
+  function addPlugin() {
+    const pkg = u.el('input', { type: 'text', class: 'mono', dir: 'ltr', placeholder: '@acme/opencode-plugin' });
+    u.modal({
+      title: 'إضافة إضافة',
+      body: el('div', { class: 'grid' }, [
+        el('div', { class: 'field' }, [
+          el('label', { text: 'الحزمة أو المسار' }), pkg,
+          el('span', { class: 'desc', html: 'أو أضفها ككائن بخيارات <code>options</code> بعد الإضافة.' })
+        ])
+      ]),
+      buttons: [
+        { label: 'إلغاء', kind: 'ghost' },
+        {
+          label: 'إضافة', kind: 'primary', close: false, onClick: () => {
+            const v = pkg.value.trim();
+            if (!v) { u.toast('أدخل اسم حزمة أو مساراً', 'err'); return false; }
+            ST.edit(x => u.set(x, 'plugins', (x.plugins || []).concat([v])));
+            u.closeModal(); NS.main.render();
+          }
+        }
+      ]
+    });
+  }
+  function move(idx, dir) {
+    ST.edit(x => {
+      const a = x.plugins || [];
+      const j = idx + dir;
+      if (j < 0 || j >= a.length) return false;
+      const t = a[idx]; a[idx] = a[j]; a[j] = t;
+      return true;
+    });
+    NS.main.render();
+  }
+  function toggle(idx) {
+    ST.edit(x => {
+      const list = x.plugins || [];
+      const e = list[idx];
+      if (u.isObj(e)) e.package = flipDisable(e.package);
+      else list[idx] = flipDisable(e);
+      return true;
+    });
+    NS.main.render();
+  }
+  /** OpenCode disables a plugin by prefixing its id with "-". */
+  function flipDisable(value) {
+    const s = String(value == null ? '' : value);
+    return s.startsWith('-') ? s.slice(1) : '-' + s;
+  }
+  function remove(idx) {
+    ST.edit(x => { (x.plugins || []).splice(idx, 1); if (!(x.plugins || []).length) delete x.plugins; });
+    NS.main.render();
+  }
+
+  /* ===============================================================
+     FORMATTERS
+     =============================================================== */
+  function viewFormatters(root) {
+    const d = S.data;
+    const f = d.formatter;
+    root.appendChild(F.pageHead({
+      icon: '🎨', title: 'المُنسِّقات (Formatters)', doc: 'formatters',
+      desc: 'تُنسِّق OpenCode الملفات بعد تغيّرها عبر <code>write</code> أو <code>edit</code> أو <code>patch</code>. التنسيق معطّل افتراضياً.'
+    }));
+
+    const c = F.card({ title: 'التفعيل', desc: 'القيمة <code>true</code> تفعّل كل المدمج وتصفّر التخصيصات. الكائن <code>{}</code> يحافظ على الموروث. <code>false</code> يعطّل كل التنسيق.' });
+    c.body.appendChild(F.grid([
+      F.field({
+        label: 'الحالة', type: 'select',
+        value: f === true ? 'on' : f === false ? 'off' : u.isObj(f) ? 'custom' : 'inherit',
+        options: [
+          { id: 'inherit', label: 'غير محدد (موروث من ملف أدنى أولوية)' },
+          { id: 'on', label: 'true — تفعيل كل المدمج' },
+          { id: 'custom', label: 'كائن — تفعيل المدمج مع تخصيصات' },
+          { id: 'off', label: 'false — تعطيل التنسيق' }
+        ],
+        onChange: v => ST.edit(x => {
+          if (v === 'on') x.formatter = true;
+          else if (v === 'off') x.formatter = false;
+          else if (v === 'custom') x.formatter = {};
+          else delete x.formatter;
+        })
+      })
+    ], 'c2'));
+    root.appendChild(c.root);
+
+    const overrides = u.isObj(f) ? f : {};
+    const customNames = Object.keys(overrides).filter(k => !C.FORMATTER_BUILTINS.some(b => b[0] === k));
+
+    const c2 = F.card({
+      title: 'المُنسِّقات المدمجة', desc: 'اضغط لتفعيل أو تعطيل، أو اضبط امتداداتها ومتغيراتها.',
+      actions: [
+        F.btn('تعطيل كل المدمج', { size: 'sm', onClick: () => {
+          const next = {};
+          C.FORMATTER_BUILTINS.forEach(b => { next[b[0]] = { disabled: true }; });
+          ST.edit(x => x.formatter = next); NS.main.render();
+        } }),
+        F.btn('إعادة الكل للافتراضي', { size: 'sm', onClick: () => { ST.edit(x => x.formatter = true); NS.main.render(); } })
+      ]
+    });
+    const tbl = el('table', { class: 'tbl' });
+    tbl.appendChild(el('thead', {}, el('tr', {}, [
+      el('th', { text: 'الاسم' }), el('th', { text: 'الامتدادات' }), el('th', { text: 'المتطلب' }), el('th', { style: { width: '100px' }, text: 'الحالة' }), el('th', { style: { width: '60px' }, text: '' })
+    ])));
+    const tb = el('tbody');
+    C.FORMATTER_BUILTINS.forEach(b => {
+      const [name, exts, req] = b;
+      const ov = overrides[name] || {};
+      const isOff = ov.disabled === true || f === false;
+      tb.appendChild(el('tr', {}, [
+        el('td', {}, el('span', { class: 'pill mono', text: name })),
+        el('td', {}, el('span', { class: 'small dim mono', text: (ov.extensions || exts).join(' ') })),
+        el('td', {}, el('span', { class: 'small dim', text: req })),
+        el('td', {}, el('span', { class: 'pill ' + (isOff ? 'red' : 'green'), text: isOff ? 'معطّل' : 'فعّال' })),
+        el('td', { class: 'actions' }, [
+          el('button', {
+            class: 'btn ghost sm', title: 'تخصيص',
+            onclick: () => editFormatter(name, ov, exts)
+          }, '⋯')
+        ])
+      ]));
+    });
+    tbl.appendChild(tb);
+    c2.body.appendChild(el('div', { class: 'table-wrap' }, tbl));
+    c2.body.appendChild(F.hint('الامتداد يُقارن بالامتداد الأخير للملف، والمطابقة حساسة لحالة الأحرف. عند تطابق عدة منسّقات تُجرّب بترتيب التسجيل ويكتمل الأمر عند أول نجاح.'));
+    root.appendChild(c2.root);
+
+    if (customNames.length) {
+      const c3 = F.card({ title: 'مُنسِّقات مخصّصة' });
+      customNames.forEach(n => {
+        const it = F.item({
+          title: n, open: true,
+          headActions: [F.btn('✕', { size: 'sm', kind: 'danger', onClick: () => { ST.edit(x => { delete x.formatter[n]; if (x.formatter && !Object.keys(x.formatter).length) x.formatter = true; }); NS.main.render(); } })]
+        });
+        it.body.appendChild(formatterFields(n, overrides[n]));
+        c3.body.appendChild(it);
+      });
+      root.appendChild(c3.root);
+    }
+
+    const c4 = F.card({ title: 'إضافة مُنسِّق مخصّص', desc: 'يحتاج <code>command</code> و <code>extensions</code> ليعمل. يُستبدل <code>$FILE</code> بالمسار المطلق للملف.' });
+    const nm = el('input', { type: 'text', class: 'mono', placeholder: 'deno-markdown', dir: 'ltr' });
+    const cm = el('input', { type: 'text', class: 'mono', placeholder: 'deno, fmt, $FILE', dir: 'ltr' });
+    const ex = el('input', { type: 'text', class: 'mono', placeholder: '.md', dir: 'ltr' });
+    c4.body.appendChild(el('div', { class: 'grid c3' }, [
+      el('div', { class: 'field' }, [el('label', { text: 'الاسم' }), nm]),
+      el('div', { class: 'field' }, [el('label', { text: 'command (مصفوفة معطيات)' }), cm]),
+      el('div', { class: 'field' }, [el('label', { text: 'extensions' }), ex])
+    ]));
+    c4.body.appendChild(el('div', { class: 'flex', style: { marginTop: '10px' } }, [
+      F.btn('إضافة', {
+        kind: 'primary', onClick: () => {
+          const n = u.slug(nm.value);
+          if (!n) { u.toast('أدخل اسماً', 'err'); return; }
+          const command = cm.value.trim() ? cm.value.trim().split(/\s+/) : [];
+          const extensions = ex.value.trim() ? ex.value.trim().split(/[\s,]+/) : [];
+          ST.edit(x => {
+            if (x.formatter === true || x.formatter === false || !u.isObj(x.formatter)) x.formatter = {};
+            x.formatter[n] = { command, extensions };
+          });
+          NS.main.render();
+        }
+      })
+    ]));
+    root.appendChild(c4.root);
+  }
+
+  function formatterFields(name, ov) {
+    ov = ov || {};
+    const cmdArr = Array.isArray(ov.command) ? ov.command.join(' ') : (typeof ov.command === 'string' ? ov.command : '');
+    const extArr = Array.isArray(ov.extensions) ? ov.extensions.join(' ') : '';
+    const wrap = el('div', { class: 'grid' });
+    wrap.appendChild(F.grid([
+      F.field({
+        label: 'command', value: cmdArr, mono: true, dir: 'ltr',
+        desc: 'مصفوفة وسائط مفصولة بمسافات. استبدل $FILE بمسار الملف المطلق.',
+        onChange: v => {
+          const arr = v ? v.trim().split(/\s+/) : [];
+          ST.edit(x => {
+            if (!u.isObj(x.formatter)) x.formatter = {};
+            u.setOrDelete(x, ['formatter', name, 'command'], arr, arr.length);
+          });
+        }
+      }),
+      F.field({
+        label: 'extensions', value: extArr, mono: true, dir: 'ltr',
+        desc: 'مع النقطة الأولى، مفصولة بمسافات.',
+        onChange: v => {
+          const arr = v ? v.trim().split(/[\s,]+/) : [];
+          ST.edit(x => {
+            if (!u.isObj(x.formatter)) x.formatter = {};
+            u.setOrDelete(x, ['formatter', name, 'extensions'], arr, arr.length);
+          });
+        }
+      })
+    ], 'c2'));
+    wrap.appendChild(el('div', { class: 'field' }, [
+      el('label', { text: 'environment' }),
+      F.kvEditor({ value: ov.environment || {}, addLabel: 'متغير بيئة', onChange: v => {
+        ST.edit(x => {
+          if (!u.isObj(x.formatter)) x.formatter = {};
+          u.setOrDelete(x, ['formatter', name, 'environment'], v, Object.keys(v || {}).length);
+        });
+      } })
+    ]));
+    wrap.appendChild(el('div', { class: 'field inline' }, [
+      el('label', { text: 'تعطيل هذا المنسّق' }),
+      F.field({
+        type: 'bool', inline: false, label: '', cls: 'inline',
+        value: ov.disabled === true,
+        onChange: v => ST.edit(x => {
+          if (!u.isObj(x.formatter)) x.formatter = {};
+          u.setOrDelete(x, ['formatter', name, 'disabled'], true, v);
+        })
+      })
+    ]));
+    return wrap;
+  }
+
+  function editFormatter(name, ov, defaultExts) {
+    const cmdIn = el('input', { type: 'text', class: 'mono', dir: 'ltr', value: (ov.command || []).join(' ') });
+    const extIn = el('input', { type: 'text', class: 'mono', dir: 'ltr', value: (ov.extensions || defaultExts || []).join(' ') });
+    const dis = el('input', { type: 'checkbox' }); dis.checked = ov.disabled === true;
+    const envBox = el('div', {});
+    let env = u.clone(ov.environment || {});
+    function renderEnv() {
+      u.clear(envBox);
+      envBox.appendChild(F.kvEditor({ value: env, addLabel: 'متغير بيئة', onChange: v => { env = v; } }));
+    }
+    renderEnv();
+
+    u.modal({
+      title: 'تخصيص ' + name, wide: true,
+      body: el('div', { class: 'grid' }, [
+        el('div', { class: 'field inline' }, [el('label', { text: 'تعطيل هذا المنسّق' }), el('label', { class: 'switch' }, [dis, el('span', { class: 'slider' })])]),
+        el('div', { class: 'field' }, [el('label', { text: 'command' }), cmdIn, el('span', { class: 'desc', text: 'مصفوفة وسائط، لا سلسلة أوامر صدفة. اتركه فارغاً للوراثة.' })]),
+        el('div', { class: 'field' }, [el('label', { text: 'extensions' }), extIn, el('span', { class: 'desc', text: 'مفصولة بمسافات، مع النقطة الأولى.' })]),
+        el('div', { class: 'field' }, [el('label', { text: 'environment' }), envBox])
+      ]),
+      buttons: [
+        { label: 'إلغاء', kind: 'ghost' },
+        {
+          label: 'حفظ', kind: 'primary', close: false, onClick: () => {
+            ST.edit(x => {
+              if (!u.isObj(x.formatter)) x.formatter = {};
+              const next = Object.assign({}, x.formatter[name]);
+              u.setOrDelete(next, 'disabled', true, dis.checked);
+              const c = cmdIn.value.trim() ? cmdIn.value.trim().split(/\s+/) : [];
+              u.setOrDelete(next, 'command', c, c.length);
+              const e = extIn.value.trim() ? extIn.value.trim().split(/[\s,]+/) : [];
+              u.setOrDelete(next, 'extensions', e, e.length);
+              u.setOrDelete(next, 'environment', env, Object.keys(env).length);
+              if (Object.keys(next).length) x.formatter[name] = next; else delete x.formatter[name];
+              if (!Object.keys(x.formatter).length) x.formatter = true;
+            });
+            u.closeModal(); NS.main.render();
+          }
+        }
+      ]
+    });
+  }
+
+  /* ===============================================================
+     THEMES
+     =============================================================== */
+  function viewThemes(root) {
+    root.appendChild(F.pageHead({
+      icon: '🎭', title: 'الثيمات', doc: 'themes',
+      desc: 'الثيم المختار يعيش في <code>cli.json</code> تحت <code>theme</code>. ملفات الثيمات المخصّصة تُوضع في مجلد <code>themes/</code> بصيغة <code>&lt;name&gt;.json</code>.'
+    }));
+
+    const cli = ST.readBuffer('cli');
+    let themeName = '', themeMode = 'system';
+    try {
+      const parsed = cli ? NS.jsonc.parse(cli.text) : null;
+      themeName = parsed && parsed.value && parsed.value.theme ? (parsed.value.theme.name || '') : '';
+      themeMode = parsed && parsed.value && parsed.value.theme ? (parsed.value.theme.mode || 'system') : 'system';
+    } catch (_) { }
+
+    const c = F.card({ title: 'الثيم الحالي (cli.json)', desc: 'يُطبَّق على واجهة الطرفية' });
+    c.body.appendChild(F.grid([
+      F.field({
+        label: 'theme.name', type: 'select', value: themeName || C.THEMES[0], options: C.THEMES.map(t => ({ id: t, label: t })),
+        desc: themeName && !C.THEMES.includes(themeName) ? 'الثيم الحالي «' + themeName + '» ليس في القائمة المدمجة — قد يكون ثيماً مخصصاً من themes/.' : 'اختر من الثيمات المدمجة.',
+        onChange: v => setCliTheme(v, themeMode)
+      }),
+      F.field({
+        label: 'theme.mode', type: 'select', value: themeMode, options: C.CLI_THEME_MODES.map(m => ({ id: m, label: m })),
+        desc: 'system يتبع مظهر الطرفية، dark/light يثبّته.',
+        onChange: v => setCliTheme(themeName || C.THEMES[0], v)
+      })
+    ], 'c2'));
+    c.body.appendChild(el('div', { class: 'flex', style: { marginTop: '10px' } }, [
+      F.btn('فتح محرر cli.json', { onClick: () => { ST.setTarget('cli'); NS.main.go('cli-appearance'); } })
+    ]));
+    root.appendChild(c.root);
+
+    const c2 = F.card({ title: 'ثيمات مخصّصة في المجلد', desc: 'ملفات <code>themes/*.json</code>' });
+    const box = el('div', {});
+    c2.body.appendChild(box);
+    root.appendChild(c2.root);
+    (async () => {
+      u.clear(box);
+      const fs = NS.fs;
+      if (!fs.API.handle) { box.appendChild(el('div', { class: 'empty', text: 'اربط مجلداً لعرض الثيمات المخصّصة.' })); return; }
+      const scope = await fs.detect();
+      const dir = scope.themesDir;
+      if (!dir) { box.appendChild(el('div', { class: 'empty', text: 'لا يوجد مجلد themes/ — استخدم الثيمات المدمجة أو أنشئ مجلد themes/.' })); return; }
+      const files = (await fs.walk(dir, 3)).filter(f => f.endsWith('.json'));
+      if (!files.length) box.appendChild(el('div', { class: 'empty', text: 'لا توجد ملفات ثيم في ' + dir }));
+      files.forEach(f => {
+        box.appendChild(el('div', { class: 'list-row', style: { padding: '7px 0', borderBottom: '1px solid var(--border)' } }, [
+          el('span', { class: 'pill mono blue', text: f.split('/').pop().replace(/\.json$/, '') }),
+          el('span', { class: 'small dim', text: f }),
+          el('div', { class: 'spacer' }),
+          F.btn('تطبيق', { size: 'sm', kind: 'ok', onClick: () => setCliTheme(f.split('/').pop().replace(/\.json$/, ''), themeMode) }),
+          F.btn('تحرير', { size: 'sm', onClick: () => editThemeJson(f) }),
+          F.btn('حذف', { size: 'sm', kind: 'danger', onClick: async () => { await NS.fs.remove(f); NS.main.render(); } })
+        ]));
+      });
+    })();
+  }
+
+  async function setCliTheme(name, mode) {
+    const buf = ST.readBuffer('cli') || { text: '{}', meta: null };
+    const p = NS.jsonc.parse(buf.text);
+    if (p.error) { u.toast('cli.json غير صالح: ' + p.error.message, 'err'); return; }
+    p.value.theme = { name, mode };
+    ST.setTarget('cli');
+    ST.edit(x => { x.theme = { name, mode }; });
+    u.toast('تم ضبط الثيم: ' + name, 'ok');
+  }
+
+  async function editThemeJson(path) {
+    const text = (await NS.fs.read(path)) || '{}';
+    const ta = el('textarea', { class: 'json-editor', rows: 20, spellcheck: 'false', dir: 'ltr' });
+    ta.value = text;
+    const status = el('div', { class: 'json-status' });
+    function validate() {
+      const p = NS.jsonc.parse(ta.value);
+      if (p.error) { ta.className = 'json-editor bad'; status.className = 'json-status bad'; status.textContent = p.error.message + ' (سطر ' + p.error.line + ')'; return false; }
+      ta.className = 'json-editor ok'; status.className = 'json-status ok'; status.textContent = 'JSON صالح ✓'; return true;
+    }
+    ta.addEventListener('input', u.debounce(validate, 400)); validate();
+    u.modal({
+      title: 'تحرير ' + path, wide: true,
+      body: el('div', {}, [ta, status]),
+      buttons: [
+        { label: 'إلغاء', kind: 'ghost' },
+        { label: 'حفظ', kind: 'primary', close: false, onClick: async () => { if (!validate()) return false; await NS.fs.writeSafe(path, ta.value); u.closeModal(); NS.main.render(); } }
+      ]
+    });
+  }
+
+  /* ===============================================================
+     REFERENCES
+     =============================================================== */
+  function viewReferences(root) {
+    const d = S.data;
+    const refs = u.isObj(d.references) ? d.references : {};
+    const names = Object.keys(refs);
+    root.appendChild(F.pageHead({
+      icon: '📚', title: 'المراجع (References)', doc: 'references', count: names.length,
+      desc: 'اجعل مجلدات محلية أو مستودعات Git متاحة ك سياق مساند باسم. يُدمج محتواها في سياق الوكيل.'
+    }));
+
+    if (!names.length) root.appendChild(el('div', { class: 'empty', text: 'لا توجد مراجع. أضف واحداً ليجعل مجلداً أو مستودعاً متاحاً للوكلاء.' }));
+
+    const wrap = el('div', { class: 'items' });
+    names.forEach(name => {
+      const r = refs[name] || {};
+      const it = F.item({
+        title: name, open: true,
+        badges: [
+          u.isObj(r) && r.repository ? el('span', { class: 'pill purple', text: 'مستودع Git' }) : el('span', { class: 'pill blue', text: 'مسار محلي' }),
+          u.isObj(r) && r.visibility ? el('span', { class: 'pill', text: r.visibility }) : null
+        ].filter(Boolean),
+        subtitle: u.isObj(r) && r.repository ? r.repository : (u.isObj(r) ? r.path : ''),
+        headActions: [F.btn('✕', { size: 'sm', kind: 'danger', onClick: () => { ST.edit(x => { if (x.references) delete x.references[name]; if (x.references && !Object.keys(x.references).length) delete x.references; }); NS.main.render(); } })]
+      });
+      const b = it.body;
+      b.appendChild(F.grid([
+        F.field({ label: 'type', type: 'select', value: u.isObj(r) && r.repository ? 'repo' : 'path', options: [{ id: 'path', label: 'مسار محلي' }, { id: 'repo', label: 'مستودع Git' }], emptyValue: undefined, onChange: v => {
+          ST.edit(x => { const node = u.ensure(x, ['references', name]);
+            if (v === 'repo') { delete node.path; u.set(node, 'repository', node.repository || ''); }
+            else { delete node.repository; delete node.branch; delete node.commit; u.set(node, 'path', node.path || ''); } });
+        } }),
+        F.field({ label: 'الوصف', value: u.isObj(r) ? r.description : undefined, onChange: v => ST.edit(x => u.setOrDelete(x, ['references', name, 'description'], v)) })
+      ], 'c2'));
+      if (u.isObj(r) && r.repository) {
+        b.appendChild(F.grid([
+          F.field({ label: 'repository', value: r.repository, placeholder: 'Effect-TS/effect', hint: 'اختصار: <code>owner/repo</code>', onChange: v => ST.edit(x => u.set(x, ['references', name, 'repository'], v)) }),
+          F.field({ label: 'branch', value: r.branch, placeholder: 'main', onChange: v => ST.edit(x => u.setOrDelete(x, ['references', name, 'branch'], v)) }),
+          F.field({ label: 'commit', value: r.commit, onChange: v => ST.edit(x => u.setOrDelete(x, ['references', name, 'commit'], v)) }),
+          F.field({ label: 'visibility', type: 'select', value: r.visibility || '', options: [{ id: '', label: '— الافتراضي —' }, { id: 'public', label: 'public' }, { id: 'private', label: 'private' }], emptyValue: undefined, onChange: v => ST.edit(x => u.setOrDelete(x, ['references', name, 'visibility'], v)) })
+        ], 'c2'));
+      } else {
+        b.appendChild(F.field({ label: 'path', value: u.isObj(r) ? r.path : '', dir: 'ltr', placeholder: '../product-docs', hint: 'المسار نسبي لمجلد المشروع أو مطلق.', onChange: v => ST.edit(x => u.set(x, ['references', name, 'path'], v)) }));
+      }
+      wrap.appendChild(it);
+    });
+    root.appendChild(wrap);
+
+    root.appendChild(el('div', { class: 'flex', style: { marginTop: '12px' } }, [
+      F.btn('مرجع جديد', {
+        kind: 'primary', icon: '+', onClick: async () => {
+          const n = await u.promptBox('مرجع جديد', 'اسم المرجع', 'docs');
+          if (!n) return;
+          const key = u.slug(n);
+          ST.edit(x => u.set(x, ['references', key], { path: '../' + key }));
+          NS.main.render();
+        }
+      })
+    ]));
+
+    const c = F.card({ title: 'ملف opencode.json', desc: 'المسارات نسبية لجذر المشروع، وتُحَل من جذر النسخة الأصلية للمشروع.' });
+    c.body.appendChild(el('pre', { class: 'snippet', html: u.esc(JSON.stringify({ references: { docs: { path: '../product-docs', description: 'Product behavior and terminology' }, effect: { repository: 'Effect-TS/effect', branch: 'main' } } }, null, 2)) }));
+    root.appendChild(c.root);
+  }
+
+  /* ===============================================================
+     INSTRUCTIONS
+     =============================================================== */
+  function viewInstructions(root) {
+    const d = S.data;
+    root.appendChild(F.pageHead({
+      icon: '📄', title: 'التعليمات (Instructions)', doc: 'instructions',
+      desc: 'ملف <code>AGENTS.md</code> هو مصدر التعليمات الفعّال. حقل <code>instructions</code> يقبله OpenCode لكنه لا يحمّل مدخلاته في V2.'
+    }));
+
+    const c = F.card({ title: 'حقل instructions', desc: 'مصفوفة مسارات أو أنماط أو روابط — يقبلها OpenCode لكنه لا يحمّل مدخلاتها' });
+    c.body.appendChild(F.listEditor({
+      items: Array.isArray(d.instructions) ? d.instructions : [], placeholder: 'CONTRIBUTING.md  أو  docs/guidelines/*.md', addLabel: 'إضافة مسار',
+      emptyText: 'لا يوجد',
+      onChange: v => ST.edit(x => u.setOrDelete(x, 'instructions', v))
+    }));
+    c.body.appendChild(F.sectionNote('استخدم <code>AGENTS.md</code> للتعليمات الفعلية. لم يوسّع OpenCode V2 هذا الحقل ليقرأ الملفات.', 'warn'));
+    root.appendChild(c.root);
+
+    const c2 = F.card({ title: 'ملف AGENTS.md', desc: 'يُبحث في المجلد الحالي ثم يصعد حتى جذر المشروع.' });
+    const box = el('div', {});
+    c2.body.appendChild(box);
+    root.appendChild(c2.root);
+
+    (async () => {
+      u.clear(box);
+      const fs = NS.fs;
+      if (!fs.API.handle) {
+        box.appendChild(el('div', { class: 'empty', text: 'اربط مجلداً لتحرير AGENTS.md مباشرة.' }));
+        return;
+      }
+      const scope = await fs.detect();
+      const path = scope.instructionsFile || 'AGENTS.md';
+      const text = (await fs.read(path)) || '';
+      const ta = el('textarea', { rows: 16, dir: 'ltr', placeholder: '# Project instructions\n\nDescribe how agents should work in this repository.' });
+      ta.value = text;
+      const prev = el('div', { class: 'md-preview', html: u.mdToHtml(text) });
+      ta.addEventListener('input', u.debounce(() => { prev.innerHTML = u.mdToHtml(ta.value); }, 300));
+      box.appendChild(el('div', { class: 'small dim', style: { marginBottom: '8px' } }, [el('span', { class: 'pill mono', text: path }), ' ', text ? 'موجود' : 'غير موجود']));
+      box.appendChild(el('div', { class: 'md-editor' }, [ta, prev]));
+      box.appendChild(el('div', { class: 'flex', style: { marginTop: '10px' } }, [
+        F.btn('حفظ ' + path, {
+          kind: 'primary', onClick: async () => {
+            try { await fs.writeSafe(path, ta.value); u.toast('حُفظ ' + path, 'ok'); }
+            catch (e) { u.toast('خطأ: ' + e.message, 'err'); }
+          }
+        })
+      ]));
+    })();
+  }
+
+  NS.views = NS.views || {};
+  Object.assign(NS.views, {
+    skills: viewSkills, commands: viewCommands, plugins: viewPlugins,
+    formatters: viewFormatters, themes: viewThemes,
+    references: viewReferences, instructions: viewInstructions
+  });
+})(window.OCM);

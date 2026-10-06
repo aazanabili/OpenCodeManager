@@ -1,0 +1,61 @@
+{
+  "$schema": "https://opencode.ai/v2/cli.json",
+
+  // Terminal appearance
+  "theme": { "name": "tokyonight", "mode": "dark" },
+  "animations": true,
+  "cursor": { "style": "block", "blinking": false },
+
+  "mouse": true,
+  "scroll": { "speed": 3, "acceleration": true },
+  "prompt": { "editor": true, "paste": "compact", "image_preview": false },
+
+  "session": {
+    "sidebar": "auto",
+    "scrollbar": true,
+    "thinking": "show",
+    "grouping": "auto",
+    "image_preview": true,
+    "tps": true,
+    "markdown": "rendered",
+    "new_location": "launch",
+    "permissions": "prompt",
+  },
+
+  "tabs": { "mode": "auto", "scope": "cwd", "layout": "horizontal", "indicators": "status" },
+  "diffs": { "source": "branch", "wrap": "word", "tree": true, "single": false, "view": "auto" },
+
+  "attention": {
+    "notifications": true,
+    "sound": true,
+    "volume": 0.4,
+    "sounds": { "permission": "/path/to/permission.wav" },
+  },
+
+  "terminal": { "title": true, "copy": "manual" },
+
+  "mini": {
+    "thinking": "show",
+    "tools": "show",
+    "shell_output": "hide",
+    "turn_summary": "show",
+    "footer": "show",
+    "splash": "show",
+    "work_spinner": "block-soft-slide",
+    "mono": false,
+    "replay": true,
+    "replay_limit": 200,
+  },
+
+  "keybinds": {
+    "leader": "ctrl+x",
+    "app.exit": ["ctrl+c", "ctrl+d", "<leader>q"],
+    "help.show": false,
+  },
+  "leader": { "timeout": 2000 },
+
+  "plugins": ["opencode-acme-cli"],
+
+  "debug": { "devtools": false, "timing": false, "turn_tokens": false },
+  "experimental": {},
+}

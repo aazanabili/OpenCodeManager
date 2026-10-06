@@ -1,0 +1,15 @@
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Node (only used for the optional test runner)
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# Local scratch
+*.log
+.DS_Store
